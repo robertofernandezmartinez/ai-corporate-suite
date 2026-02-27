@@ -1,125 +1,103 @@
 import pandas as pd
 import joblib
-from pathlib import Path
-from db.supabase_client import get_supabase
-from datetime import datetime
+import uuid
+import logging
 import traceback
+from pathlib import Path
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 class NASAPredictor:
+    """
+    I built this engine to calculate the Remaining Useful Life (RUL)
+    of turbofan engines using the specific sensor features required by the model.
+    """
     def __init__(self):
-        models_dir = Path(__file__).parent.parent / "models"
+        try:
+            from db.supabase_client import get_supabase
+            self.supabase = get_supabase()
+        except ImportError:
+            self.supabase = None
+
+        self.base_dir = Path(__file__).resolve().parent.parent
+        self.model_path = self.base_dir / "models" / "nasa_model.pkl"
+        self.model = None
         
-        model_path = models_dir / "nasa_model.pkl"
-        
-        if not model_path.exists():
-            raise FileNotFoundError(f"Model not found: {model_path}")
-        
-        print(f"Loading NASA model from: {model_path}")
-        
-        # Load trained pipeline
-        self.pipeline = joblib.load(model_path)
-        
-        print(f"NASA model loaded successfully: {type(self.pipeline)}")
-        
-        # Expected features based on NASA training
-        self.expected_features = [
-            'time_in_cycles',
-            'sensor_11',
-            'sensor_4',
-            'sensor_12',
-            'sensor_7',
-            'sensor_15',
-            'sensor_21',
-            'sensor_20'
+        # I mapped the columns to match the specific names the model expects
+        # These are the standard names for the NASA CMAPSS FD001 dataset
+        self.column_names = [
+            'unit_id', 'time_in_cycles', 'setting_1', 'setting_2', 'setting_3',
+            'sensor_1', 'sensor_2', 'sensor_3', 'sensor_4', 'sensor_5',
+            'sensor_6', 'sensor_7', 'sensor_8', 'sensor_9', 'sensor_10',
+            'sensor_11', 'sensor_12', 'sensor_13', 'sensor_14', 'sensor_15',
+            'sensor_16', 'sensor_17', 'sensor_18', 'sensor_19', 'sensor_20',
+            'sensor_21'
         ]
         
-        print(f"Expected features: {self.expected_features}")
-        
-        self.supabase = get_supabase()
-    
-    async def predict_from_file(self, file):
-        """
-        Process uploaded engine data and predict RUL
-        """
+        self._load_model()
+
+    def _load_model(self):
+        """I load the predictive maintenance model from the serialized pickle file."""
         try:
-            print("Starting NASA RUL prediction process...")
+            if self.model_path.exists():
+                self.model = joblib.load(self.model_path)
+                logger.info(f"✅ NASA Engine: Loaded from {self.model_path}")
+            else:
+                logger.warning(f"⚠️ NASA Engine: Model file missing at {self.model_path}")
+        except Exception as e:
+            logger.error(f"❌ NASA Load Error: {e}")
+
+    async def predict_from_file(self, file):
+        """I execute RUL predictions and handle the batch persistence to Supabase."""
+        if not self.model:
+            return {"success": False, "detail": "NASA engine not initialized"}
+
+        try:
+            # I read the whitespace-separated file and assign the required sensor names
+            df_raw = pd.read_csv(file.file, sep=r'\s+', engine='python', header=None, names=self.column_names)
             
-            # Read TXT/CSV file
-            df = pd.read_csv(file.file, delim_whitespace=True, header=None)
-            print(f"File loaded: {df.shape}")
+            # I perform the prediction. The model now finds the columns it expects.
+            predictions = self.model.predict(df_raw)
             
-            # Assign column names (NASA format)
-            n_cols = df.shape[1]
-            n_sensors = n_cols - 5
-            columns = (
-                ['unit_number', 'time_in_cycles'] +
-                [f'op_setting_{i}' for i in range(1, 4)] +
-                [f'sensor_{i}' for i in range(1, n_sensors + 1)]
-            )
-            df.columns = columns
+            if predictions is None:
+                raise ValueError("The model returned None. Verify feature alignment.")
+
+            now_ts = datetime.now().isoformat()
             
-            print(f"Columns assigned: {df.columns.tolist()[:5]}...")
-            
-            # Extract features
-            X = df[self.expected_features]
-            print(f"Features shape: {X.shape}")
-            
-            # Predict RUL
-            print("Calling predict...")
-            rul_predictions = self.pipeline.predict(X)
-            print(f"Predictions generated: {len(rul_predictions)}")
-            
-            # Create results
-            results = pd.DataFrame({
-                'unit_number': df['unit_number'],
-                'time_in_cycles': df['time_in_cycles'],
-                'predicted_rul': rul_predictions,
-                'rul_category': pd.Series(rul_predictions).apply(self._categorize_rul),
-                'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            # I prepare the results for the database.
+            # I am now using 'unit_id' to match the clean database schema.
+            results_df = pd.DataFrame({
+                'prediction_id': [str(uuid.uuid4()) for _ in range(len(df_raw))],
+                'unit_id': df_raw['unit_id'].values.astype(int),
+                'predicted_rul': predictions.astype(float),
+                'timestamp': now_ts
             })
-            
-            # Save to Supabase in batches
-            print("Saving to Supabase in batches...")
-            records = results.to_dict('records')
-            
-            # Add prediction_id
-            for record in records:
-                record['prediction_id'] = f"NASA_{datetime.now().strftime('%Y%m%d%H%M%S')}_{record['unit_number']}_{record['time_in_cycles']}"
-            
-            # Insert in batches of 1000
-            batch_size = 1000
-            total_batches = (len(records) + batch_size - 1) // batch_size
-            
-            for i in range(0, len(records), batch_size):
-                batch = records[i:i + batch_size]
-                self.supabase.table('nasa_rul_predictions').insert(batch).execute()
-                print(f"Batch {i//batch_size + 1}/{total_batches} saved")
-            
-            print("All batches saved to Supabase")
-            
-            # Return summary
-            category_dist = results['rul_category'].value_counts().to_dict()
-            avg_rul = float(results['predicted_rul'].mean())
-            
+
+            # I use batching for the persistence layer to handle NASA telemetry files
+            if self.supabase:
+                self._persist_in_batches(results_df)
+
             return {
                 "success": True,
-                "predictions_generated": len(results),
-                "engines_analyzed": int(df['unit_number'].nunique()),
-                "average_rul": round(avg_rul, 2),
-                "category_distribution": category_dist,
-                "timestamp": datetime.now().isoformat()
+                "units_processed": len(df_raw),
+                "avg_rul": float(predictions.mean()),
+                "status": "Operational"
             }
-        
+
         except Exception as e:
-            print(f"ERROR in predict_from_file: {e}")
-            print(traceback.format_exc())
-            raise
-    
-    def _categorize_rul(self, rul):
-        """Categorize RUL into maintenance urgency levels"""
-        if rul < 50:
-            return 'CRITICAL'
-        elif rul < 100:
-            return 'WARNING'
-        else:
-            return 'NORMAL'
+            logger.error(f"❌ NASA Runtime Error: {traceback.format_exc()}")
+            return {"success": False, "detail": str(e)}
+
+    def _persist_in_batches(self, df: pd.DataFrame):
+        """I process database insertions in chunks for high reliability."""
+        table_name = "nasa_predictions"
+        batch_size = 5000
+        records = df.to_dict(orient='records')
+        
+        try:
+            for i in range(0, len(records), batch_size):
+                self.supabase.table(table_name).insert(records[i : i + batch_size]).execute()
+            logger.info("✅ NASA Persistence Complete.")
+        except Exception as e:
+            logger.warning(f"⚠️ NASA Persistence Error: {e}")

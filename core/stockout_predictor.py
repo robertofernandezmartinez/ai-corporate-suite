@@ -1,114 +1,204 @@
 import pandas as pd
+import numpy as np
 import joblib
-from pathlib import Path
-from db.supabase_client import get_supabase
-from datetime import datetime
 import traceback
+import uuid
+import logging
+from pathlib import Path
+from datetime import datetime
+from sklearn.base import BaseEstimator, TransformerMixin
+import __main__
 
+logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# Feature Engineering Class (MUST match training definition)
+# ============================================================
+class StockoutFeatureEngineer(BaseEstimator, TransformerMixin):
+    def __init__(self):
+        self.cat_cols = [
+            'store_id', 'category', 'region', 'weather', 'holiday_promo',
+            'seasonality', 'month', 'day_of_week', 'product_id'
+        ]
+        self.num_cols = [
+            'inventory_level', 'units_sold', 'price', 'discount',
+            'competitor_pricing', 'is_weekend'
+        ]
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X):
+        df = X.copy()
+
+        # Map PRO dataset columns -> internal schema
+        mapping = {
+            'Date': 'date',
+            'Store ID': 'store_id',
+            'Product ID': 'product_id',
+            'Category': 'category',
+            'Region': 'region',
+            'Inventory Level': 'inventory_level',
+            'Units Sold': 'units_sold',
+            'Units Ordered': 'units_ordered',
+            'Price': 'price',
+            'Discount': 'discount',
+            'Weather Condition': 'weather',
+            'Holiday/Promotion': 'holiday_promo',
+            'Competitor Pricing': 'competitor_pricing',
+            'Seasonality': 'seasonality'
+        }
+        df = df.rename(columns=mapping)
+
+        # Time features
+        if 'date' in df.columns:
+            date_dt = pd.to_datetime(df['date'], errors='coerce', dayfirst=True)
+            df['month'] = date_dt.dt.month.astype('Int64').astype(str).fillna('Unknown')
+            df['day_of_week'] = date_dt.dt.dayofweek.astype('Int64').astype(str).fillna('Unknown')
+            df['is_weekend'] = date_dt.dt.dayofweek.isin([5, 6]).astype(float)
+        else:
+            df['month'] = 'Unknown'
+            df['day_of_week'] = 'Unknown'
+            df['is_weekend'] = 0.0
+
+        # Enforce categorical schema
+        for col in self.cat_cols:
+            if col not in df.columns:
+                df[col] = 'Unknown'
+            df[col] = df[col].astype(str)
+
+        # Enforce numeric schema (critical to avoid isnan/imputer errors)
+        for col in self.num_cols:
+            if col not in df.columns:
+                df[col] = 0.0
+
+            # Clean typical numeric-as-string issues (commas, spaces)
+            if df[col].dtype == object:
+                df[col] = (
+                    df[col]
+                    .astype(str)
+                    .str.replace(',', '', regex=False)
+                    .str.strip()
+                )
+
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+
+        return df[self.cat_cols + self.num_cols]
+
+
+# Fix for models trained in __main__ (notebook/script)
+__main__.StockoutFeatureEngineer = StockoutFeatureEngineer
+
+
+# ============================================================
+# Stockout Predictor
+# ============================================================
 class StockoutPredictor:
     def __init__(self):
-        models_dir = Path(__file__).parent.parent / "models"
-        
-        model_path = models_dir / "stockout_model.pkl"
-        
-        if not model_path.exists():
-            raise FileNotFoundError(f"Model not found: {model_path}")
-        
-        print(f"Loading Stockout model from: {model_path}")
-        
-        self.pipeline = joblib.load(model_path)
-        
-        print(f"Stockout model loaded successfully: {type(self.pipeline)}")
-        
-        self.supabase = get_supabase()
-    
-    async def predict_from_file(self, file):
-        """
-        Process uploaded inventory CSV and predict stockout risk
-        """
+        # Supabase init (safe)
         try:
-            print("Starting Stockout prediction process...")
-            
-            # Read CSV
-            df = pd.read_csv(file.file)
-            print(f"CSV loaded: {df.shape}")
-            
-            # Rename columns (same as training)
-            df = df.rename(columns={
-                "Date": "date",
-                "Store ID": "store_id",
-                "Product ID": "product_id",
-                "Category": "category",
-                "Region": "region",
-                "Inventory Level": "inventory_level",
-                "Units Sold": "units_sold",
-                "Units Ordered": "units_ordered",
-                "Demand Forecast": "demand_forecast",
-                "Price": "price",
-                "Discount": "discount",
-                "Weather Condition": "weather",
-                "Holiday/Promotion": "holiday_promo",
-                "Competitor Pricing": "competitor_pricing",
-                "Seasonality": "seasonality",
-            })
-            
-            # Convert data types
-            df['holiday_promo'] = df['holiday_promo'].astype('category')
-            df['date'] = pd.to_datetime(df['date'], errors='coerce')
-            
-            # Drop target if present
-            X = df.drop(columns=['stockout_14d'], errors='ignore')
-            
-            print(f"Features shape: {X.shape}")
-            
-            # Predict
-            print("Calling predict...")
-            preds = self.pipeline.predict(X)
-            probs = self.pipeline.predict_proba(X)[:, 1]
-            
-            print(f"Predictions generated: {len(preds)}")
-            
-            # Create results
-            results = pd.DataFrame({
-                'product_id': df['product_id'] if 'product_id' in df.columns else df.index,
-                'store_id': df['store_id'] if 'store_id' in df.columns else 'UNKNOWN',
-                'stockout_risk_score': probs,
-                'stockout_predicted': preds,
-                'risk_level': pd.Series(probs).apply(
-                    lambda x: 'HIGH' if x >= 0.70 else ('MEDIUM' if x >= 0.40 else 'LOW')
-                ),
-                'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            })
-            
-            # Save to Supabase in batches
-            print("Saving to Supabase in batches...")
-            records = results.to_dict('records')
-            
-            for i, record in enumerate(records):
-                record['prediction_id'] = f"ST_{datetime.now().strftime('%Y%m%d%H%M%S')}_{i}_{record['product_id']}"
+            from db.supabase_client import get_supabase
+            self.supabase = get_supabase()
+        except Exception as e:
+            logger.warning(f"Supabase not available: {e}")
+            self.supabase = None
 
-            batch_size = 1000
-            total_batches = (len(records) + batch_size - 1) // batch_size
-            
-            for i in range(0, len(records), batch_size):
-                batch = records[i:i + batch_size]
-                self.supabase.table('stockout_predictions').insert(batch).execute()
-                print(f"Batch {i//batch_size + 1}/{total_batches} saved")
-            
-            print("All batches saved to Supabase")
-            
-            # Return summary
-            distribution = results['risk_level'].value_counts().to_dict()
-            
+        # Find model robustly (avoid fragile parent.parent assumptions)
+        current_file = Path(__file__).resolve()
+        self.model_path = None
+        for parent in [current_file.parent] + list(current_file.parents):
+            candidate = parent / "models" / "stockout_model.pkl"
+            if candidate.exists():
+                self.model_path = candidate
+                break
+
+        if self.model_path is None:
+            logger.error("❌ Stockout Init Error: stockout_model.pkl not found under any parent /models/")
+            self.pipeline = None
+            return
+
+        try:
+            self.pipeline = joblib.load(self.model_path)
+            logger.info(f"✅ Stockout Engine loaded from {self.model_path}")
+        except Exception as e:
+            logger.error(f"❌ Stockout Engine Load Error: {e}")
+            logger.error(traceback.format_exc())
+            self.pipeline = None
+
+    def _get_risk_level(self, score: float) -> str:
+        if score >= 0.80:
+            return 'CRITICAL'
+        if score >= 0.50:
+            return 'HIGH'
+        if score >= 0.20:
+            return 'MEDIUM'
+        return 'LOW'
+
+    async def predict_from_file(self, file):
+        if not self.pipeline:
+            return {"success": False, "detail": "Engine not initialized"}
+
+        try:
+            # Read raw CSV (do NOT pre-subset columns; pipeline expects raw)
+            df_raw = pd.read_csv(file.file, low_memory=False)
+
+            # Predict
+            probabilities = self.pipeline.predict_proba(df_raw)[:, 1].astype(float)
+
+            # Financial impact proxy (Risk * Price * Velocity)
+            # Supports both PRO-style and already-normalized columns
+            price = pd.to_numeric(
+                df_raw.get('Price', df_raw.get('price', 0)),
+                errors='coerce'
+            ).fillna(0.0)
+
+            velocity = pd.to_numeric(
+                df_raw.get('Units Sold', df_raw.get('units_sold', 0)),
+                errors='coerce'
+            ).fillna(0.0)
+
+            impact_score = (probabilities * price * velocity).astype(float)
+
+            now_ts = datetime.now().isoformat(timespec="seconds")
+
+            product_id_series = df_raw.get('Product ID', df_raw.get('product_id', 'Unknown'))
+            if not isinstance(product_id_series, (pd.Series, np.ndarray, list)):
+                product_id_series = [product_id_series] * len(df_raw)
+
+            results_df = pd.DataFrame({
+                'prediction_id': [str(uuid.uuid4()) for _ in range(len(df_raw))],
+                'product_id': pd.Series(product_id_series).astype(str),
+                'risk_score': probabilities,
+                'risk_level': [self._get_risk_level(p) for p in probabilities],
+                'financial_impact': impact_score,
+                'timestamp': [now_ts for _ in range(len(df_raw))]
+            })
+
+            # Persist to NEW table name: stockout_predictions (non-blocking, batched)
+            if self.supabase:
+                self._persist_to_db(results_df)
+
             return {
                 "success": True,
-                "predictions_generated": len(results),
-                "distribution": distribution,
-                "high_risk_products": int((results['risk_level'] == 'HIGH').sum()),
-                "timestamp": datetime.now().isoformat()
+                "processed_records": len(df_raw),
+                "total_exposure": float(results_df['financial_impact'].sum()),
+                "risk_summary": results_df['risk_level'].value_counts().to_dict(),
+                "top_alerts": results_df.sort_values(by='financial_impact', ascending=False).head(10).to_dict('records')
             }
-        
+
         except Exception as e:
-            print(f"ERROR in predict_from_file: {e}")
-            print(traceback.format_exc())
-            raise
+            logger.error(f"❌ Stockout Runtime Error:\n{traceback.format_exc()}")
+            return {"success": False, "detail": str(e)}
+
+    def _persist_to_db(self, df: pd.DataFrame):
+        table_name = "stockout_predictions"
+        batch_size = 5000
+        records = df.to_dict(orient='records')
+
+        try:
+            for i in range(0, len(records), batch_size):
+                self.supabase.table(table_name).insert(records[i:i + batch_size]).execute()
+            logger.info(f"✅ Batch persistence successful for {table_name}")
+        except Exception as e:
+            logger.error(f"⚠️ Persistence Warning: {e}")

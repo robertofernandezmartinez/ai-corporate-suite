@@ -1,58 +1,48 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import JSONResponse
-import uvicorn
+import os
+import logging
+from fastapi import FastAPI, UploadFile, File, Header, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="AI Corporate Suite", version="1.0.0")
+# Importaciones ajustadas a tu carpeta 'core'
+from core.nasa_predictor import NASAPredictor
+from core.smartport_predictor import SmartPortPredictor
+from core.stockout_predictor import StockoutPredictor
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("AI_Corporate_Suite")
+
+app = FastAPI(title="AI Corporate Suite API")
+
+# Seguridad
+API_KEY = os.getenv("SUITE_INTERNAL_KEY", "dev_key")
+
+async def verify_api_key(x_api_key: str = Header(...)):
+    if x_api_key != API_KEY:
+        raise HTTPException(status_code=403, detail="Unauthorized")
+    return x_api_key
+
+# Inicialización de motores
+nasa_engine = NASAPredictor()
+smartport_engine = SmartPortPredictor()
+stockout_engine = StockoutPredictor()
 
 @app.get("/")
-def root():
-    return {
-        "status": "online",
-        "message": "AI Corporate Suite API",
-        "endpoints": {
-            "smartport": "/smartport/upload",
-            "nasa": "/nasa/upload",
-            "stockout": "/stockout/upload"
-        },
-        "docs": "/docs"
-    }
+async def health():
+    return {"status": "Online", "suite": "AI Corporate Suite"}
 
-@app.get("/health")
-def health():
-    return {"status": "healthy"}
+@app.post("/predict/nasa", dependencies=[Depends(verify_api_key)])
+async def predict_nasa(file: UploadFile = File(...)):
+    return await nasa_engine.predict_from_file(file)
 
-@app.post("/smartport/upload")
-async def upload_smartport(file: UploadFile = File(...)):
-    """Upload SmartPort tracking data CSV"""
-    try:
-        from core.smartport_predictor import SmartPortPredictor
-        predictor = SmartPortPredictor()
-        result = await predictor.predict_from_file(file)
-        return JSONResponse(content=result)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.post("/predict/smartport", dependencies=[Depends(verify_api_key)])
+async def predict_smartport(file: UploadFile = File(...)):
+    return await smartport_engine.predict_from_file(file)
 
-@app.post("/nasa/upload")
-async def upload_nasa(file: UploadFile = File(...)):
-    """Upload NASA engine test data TXT"""
-    try:
-        from core.nasa_predictor import NASAPredictor
-        predictor = NASAPredictor()
-        result = await predictor.predict_from_file(file)
-        return JSONResponse(content=result)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/stockout/upload")
-async def upload_stockout(file: UploadFile = File(...)):
-    """Upload inventory data CSV"""
-    try:
-        from core.stockout_predictor import StockoutPredictor
-        predictor = StockoutPredictor()
-        result = await predictor.predict_from_file(file)
-        return JSONResponse(content=result)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.post("/predict/stockout", dependencies=[Depends(verify_api_key)])
+async def predict_stockout(file: UploadFile = File(...)):
+    return await stockout_engine.predict_from_file(file)
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
