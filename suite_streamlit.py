@@ -2,6 +2,12 @@ import streamlit as st
 import pandas as pd
 from db.supabase_client import supabase
 
+import os
+import streamlit as st
+
+# Force port binding for Railway
+port = int(os.environ.get("PORT", 8080))
+
 st.set_page_config(
     page_title="AI Corporate Suite 2026",
     page_icon="📊",
