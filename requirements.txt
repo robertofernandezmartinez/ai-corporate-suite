@@ -14,3 +14,4 @@ pyarrow
 scipy
 pyTelegramBotAPI==4.26.0
 anthropic
+streamlit
