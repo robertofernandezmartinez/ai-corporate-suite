@@ -1,21 +1,20 @@
+import os
 import streamlit as st
 import pandas as pd
 from db.supabase_client import get_supabase
 
-# Initialize the client
-supabase = get_supabase()
-
-import os
-import streamlit as st
-
-# Force port binding for Railway
-port = int(os.environ.get("PORT", 8080))
-
+# Streamlit config MUST be the first Streamlit command
 st.set_page_config(
     page_title="AI Corporate Suite 2026",
     page_icon="📊",
     layout="wide"
 )
+
+# Force port binding for Railway
+port = int(os.environ.get("PORT", 8080))
+
+# Initialize the Supabase client
+supabase = get_supabase()
 
 st.title("🚀 AI Corporate Suite 2026")
 st.subheader("Main Control Center")

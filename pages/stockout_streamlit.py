@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import joblib
 import numpy as np
+import os
 
 # 1. PAGE CONFIGURATION
 st.set_page_config(
@@ -26,7 +27,8 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # 2. LOAD PREDICTION ENGINE
-MODEL_PATH = '04_Models/full_pipeline_14day_strategic.pkl'
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MODEL_PATH = os.path.join(ROOT_DIR, "04_Models", "full_pipeline_14day_strategic.pkl")
 
 @st.cache_resource
 def load_model():
