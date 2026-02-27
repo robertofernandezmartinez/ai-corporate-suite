@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from db.supabase_client import supabase
+from db.supabase_client import supabase_client as supabase
 
 import os
 import streamlit as st
