@@ -11,7 +11,7 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-API_URL = os.getenv("SUITE_API_URL", "https://central-api-engine-production.up.railway.app")
+API_URL = os.getenv("SUITE_API_URL", "https://ai-corporate-suite-production.up.railway.app")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 claude = Anthropic(api_key=ANTHROPIC_KEY)
