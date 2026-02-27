@@ -103,9 +103,8 @@ def handle_ai(message):
     5. Always reply in the same language as the user."""
 
     response = claude.messages.create(
-        model="claude-3-opus-20240229",
-        max_tokens=800,
-        system=system_prompt,
+        model="claude-3-5-sonnet-20241022",
+        max_tokens=1024,
         messages=[{"role": "user", "content": message.text}]
     )
     bot.reply_to(message, response.content[0].text, parse_mode='Markdown')
