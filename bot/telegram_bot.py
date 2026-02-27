@@ -4,163 +4,112 @@ import os
 from anthropic import Anthropic
 from dotenv import load_dotenv
 from supabase import create_client
-from collections import Counter
 
+# 1. SETUP
 load_dotenv()
-
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-API_URL = "http://0.0.0.0:8000"
+API_URL = os.getenv("SUITE_API_URL", "https://central-api-engine-production.up.railway.app")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 claude = Anthropic(api_key=ANTHROPIC_KEY)
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def get_supabase_context():
-    """Get aggregated stats from all 3 systems"""
+    """Fetches real-time data from the 3 industrial pillars"""
     context = {}
     
-    # SmartPort
+    # --- SmartPort ---
     try:
-        total = supabase.table('smartport_alerts').select('*', count='exact').execute()
-        critical = supabase.table('smartport_alerts').select('*', count='exact').eq('risk_level', 'CRITICAL').execute()
-        warning = supabase.table('smartport_alerts').select('*', count='exact').eq('risk_level', 'WARNING').execute()
-        normal = supabase.table('smartport_alerts').select('*', count='exact').eq('risk_level', 'NORMAL').execute()
-        context['smartport'] = {
-            'total': total.count,
-            'critical': critical.count,
-            'warning': warning.count,
-            'normal': normal.count
-        }
-    except Exception as e:
-        context['smartport'] = {'error': str(e)}
+        sp = supabase.table('smartport_predictions').select('risk_level').execute()
+        lvls = [r['risk_level'] for r in sp.data]
+        context['smartport'] = {'total': len(lvls), 'critical': lvls.count('CRITICAL')}
+    except: context['smartport'] = {'total': 0, 'critical': 0}
     
-    # NASA
+    # --- NASA RUL ---
     try:
-        total = supabase.table('nasa_rul_predictions').select('*', count='exact').execute()
-        critical = supabase.table('nasa_rul_predictions').select('*', count='exact').eq('rul_category', 'CRITICAL').execute()
-        warning = supabase.table('nasa_rul_predictions').select('*', count='exact').eq('rul_category', 'WARNING').execute()
-        normal = supabase.table('nasa_rul_predictions').select('*', count='exact').eq('rul_category', 'NORMAL').execute()
-        context['nasa'] = {
-            'total': total.count,
-            'critical': critical.count,
-            'warning': warning.count,
-            'normal': normal.count,
-        }
-    except Exception as e:
-        context['nasa'] = {'error': str(e)}
+        ns = supabase.table('nasa_predictions').select('predicted_rul').execute()
+        ruls = [r['predicted_rul'] for r in ns.data]
+        context['nasa'] = {'total': len(ruls), 'critical': len([r for r in ruls if r < 30])}
+    except: context['nasa'] = {'total': 0, 'critical': 0}
     
-    # Stockout
+    # --- Stockout ---
     try:
-        total = supabase.table('stockout_predictions').select('*', count='exact').execute()
-        high = supabase.table('stockout_predictions').select('*', count='exact').eq('risk_level', 'HIGH').execute()
-        medium = supabase.table('stockout_predictions').select('*', count='exact').eq('risk_level', 'MEDIUM').execute()
-        low = supabase.table('stockout_predictions').select('*', count='exact').eq('risk_level', 'LOW').execute()
-        context['stockout'] = {
-            'total': total.count,
-            'high': high.count,
-            'medium': medium.count,
-            'low': low.count
-        }
-    except Exception as e:
-        context['stockout'] = {'error': str(e)}
-    
+        st = supabase.table('stockout_predictions').select('risk_level').execute()
+        lvls = [r['risk_level'] for r in st.data]
+        context['stockout'] = {'total': len(lvls), 'high': lvls.count('HIGH')}
+    except: context['stockout'] = {'total': 0, 'high': 0}
+        
     return context
 
-def ask_claude(user_message, context):
-    sp = context.get('smartport', {})
-    nasa = context.get('nasa', {})
-    st = context.get('stockout', {})
-
-    system_prompt = f"""You are an AI assistant for an industrial AI Corporate Suite.
-Here is the EXACT current data from 3 systems:
-
-SMARTPORT (vessel delay risk):
-- Total predictions: {sp.get('total', 0):,}
-- CRITICAL (immediate action): {sp.get('critical', 0):,}
-- WARNING (monitor): {sp.get('warning', 0):,}
-- NORMAL (routine): {sp.get('normal', 0):,}
-
-NASA RUL (engine remaining useful life):
-- Total predictions: {nasa.get('total', 0):,}
-- CRITICAL (less than 50 cycles left): {nasa.get('critical', 0):,}
-- WARNING (50-100 cycles left): {nasa.get('warning', 0):,}
-- NORMAL (more than 100 cycles left): {nasa.get('normal', 0):,}
-
-STOCKOUT RISK (inventory):
-- Total predictions: {st.get('total', 0):,}
-- HIGH risk (likely stockout): {st.get('high', 0):,}
-- MEDIUM risk: {st.get('medium', 0):,}
-- LOW risk: {st.get('low', 0):,}
-
-Use ONLY these exact numbers. Do not confuse total with critical.
-Answer concisely. Use emojis. Reply in the same language as the user."""
-
-    response = claude.messages.create(
-        model="claude-opus-4-5-20251101",
-        max_tokens=500,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_message}]
-    )
-    return response.content[0].text
-
+# 2. VISUAL HANDLERS
 @bot.message_handler(commands=['start', 'help'])
-def start(message):
-    bot.reply_to(message, """
-🤖 *AI Corporate Suite Bot*
-
-Hola! Soy tu asistente de IA industrial.
-
-Puedo responder preguntas sobre:
-📦 *SmartPort* - Riesgos de delay en puertos
-🔧 *NASA RUL* - Vida útil restante de motores  
-🏪 *Stockout* - Riesgo de rotura de stock
-
-¡Pregúntame lo que quieras en lenguaje natural!
-""", parse_mode='Markdown')
+def welcome(message):
+    welcome_text = (
+        "✨ *AI Corporate Suite v2.0* ✨\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "Hello! I am your **Industrial Intelligence Assistant**. "
+        "I monitor your fleet's health in real-time.\n\n"
+        "🚀 **Available Commands:**\n"
+        "👉 `/status` - Full Fleet Overview\n"
+        "👉 `/help` - Show this guide\n\n"
+        "💡 *Tip:* You can ask me things like: \n"
+        "_'Which engines need maintenance?'_ or \n"
+        "_'Give me a summary of the port risk.'_"
+    )
+    bot.reply_to(message, welcome_text, parse_mode='Markdown')
 
 @bot.message_handler(commands=['status'])
-def status(message):
-    try:
-        response = requests.get(f"{API_URL}/health")
-        if response.status_code == 200:
-            context = get_supabase_context()
-            sp = context.get('smartport', {})
-            nasa = context.get('nasa', {})
-            st = context.get('stockout', {})
-            bot.reply_to(message, f"""
-✅ *API Online - All 3 models ready*
-
-🚢 *SmartPort:* {sp.get('total', 0):,} predictions
-└ 🔴 Critical: {sp.get('critical', 0):,}
-└ 🟡 Warning: {sp.get('warning', 0):,}
-└ 🟢 Normal: {sp.get('normal', 0):,}
-
-🔧 *NASA RUL:* {nasa.get('total', 0):,} predictions
-└ 🔴 Critical: {nasa.get('critical', 0):,}
-└ 🟡 Warning: {nasa.get('warning', 0):,}
-└ 🟢 Normal: {nasa.get('normal', 0):,}
-
-📦 *Stockout:* {st.get('total', 0):,} predictions
-└ 🔴 High: {st.get('high', 0):,}
-└ 🟡 Medium: {st.get('medium', 0):,}
-└ 🟢 Low: {st.get('low', 0):,}
-""", parse_mode='Markdown')
-    except:
-        bot.reply_to(message, "❌ API Offline")
+def status_report(message):
+    ctx = get_supabase_context()
+    
+    # Visual construction of the report
+    report = [
+        "📊 *EXECUTIVE SYSTEM REPORT*",
+        "━━━━━━━━━━━━━━━━━━",
+        f"🚢 *SMARTPORT LOGISTICS*",
+        f"  ├ Total Records: `{ctx['smartport']['total']}`",
+        f"  └ Critical Alerts: `{'🔴 ' + str(ctx['smartport']['critical']) if ctx['smartport']['critical'] > 0 else '🟢 None'}`",
+        "",
+        f"🔧 *NASA ENGINE RUL*",
+        f"  ├ Engines Monitored: `{ctx['nasa']['total']}`",
+        f"  └ Risk (<30 cycles): `{'🔴 ' + str(ctx['nasa']['critical']) if ctx['nasa']['critical'] > 0 else '🟢 Healthy'}`",
+        "",
+        f"📦 *INVENTORY STOCKOUT*",
+        f"  ├ Items Analyzed: `{ctx['stockout']['total']}`",
+        f"  └ High Risk: `{'🔴 ' + str(ctx['stockout']['high']) if ctx['stockout']['high'] > 0 else '🟢 Optimal'}`",
+        "━━━━━━━━━━━━━━━━━━",
+        "💬 *AI Insights:* _Ask me for a detailed analysis of these figures._"
+    ]
+    
+    bot.reply_to(message, "\n".join(report), parse_mode='Markdown')
 
 @bot.message_handler(func=lambda message: True)
-def handle_message(message):
-    try:
-        bot.send_chat_action(message.chat.id, 'typing')
-        context = get_supabase_context()
-        response = ask_claude(message.text, context)
-        bot.reply_to(message, response)
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error: {str(e)}")
+def handle_ai(message):
+    bot.send_chat_action(message.chat.id, 'typing')
+    context = get_supabase_context()
+    
+    # Claude System Prompt with Visual Instructions
+    system_prompt = f"""You are the AI Corporate Assistant. 
+    Data: SmartPort({context['smartport']}), NASA({context['nasa']}), Stockout({context['stockout']}).
+    
+    RULES:
+    1. Use Markdown for bold/italic text.
+    2. Use professional Emojis (🚀, 📊, ⚠️, ✅).
+    3. Be concise but insightful.
+    4. If there are CRITICAL or HIGH risks, highlight them with 🚨.
+    5. Always reply in the same language as the user."""
+
+    response = claude.messages.create(
+        model="claude-3-opus-20240229",
+        max_tokens=800,
+        system=system_prompt,
+        messages=[{"role": "user", "content": message.text}]
+    )
+    bot.reply_to(message, response.content[0].text, parse_mode='Markdown')
 
 if __name__ == "__main__":
-    print("🤖 AI Corporate Suite Bot started...")
+    print("🚀 Corporate Visual Bot is live...")
     bot.infinity_polling()
