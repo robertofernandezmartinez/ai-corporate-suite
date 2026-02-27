@@ -15,3 +15,6 @@ scipy
 pyTelegramBotAPI==4.26.0
 anthropic
 streamlit
+plotly
+gspread
+oauth2client

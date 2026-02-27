@@ -41,7 +41,7 @@ st.divider()
 # Activity Log from Supabase
 st.write("### 📋 Recent System Activity")
 try:
-    response = supabase.table("smartport_logs").select("*").limit(10).execute()
+    response = supabase.table("smartport_predictions").select("*").limit(10).execute()
     if response.data:
         df = pd.DataFrame(response.data)
         st.dataframe(df, use_container_width=True)
