@@ -13,15 +13,13 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    .main { background-color: #0e1117; color: white; }
-    div[data-testid="stMetric"] {
-        background-color: #1e2130;
-        padding: 20px;
-        border-radius: 12px;
-        border: 1px solid #3e4259;
-    }
-    div[data-testid="stMetricValue"] { color: #ffffff; }
     footer {visibility: hidden;}
+    .stockout-box {
+        padding: 1rem;
+        border-radius: 14px;
+        border: 1px solid rgba(128,128,128,0.25);
+        background: rgba(127,127,127,0.06);
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -41,7 +39,7 @@ def load_model():
 def get_client():
     return get_supabase()
 
-def fetch_predictions(limit: int = 200) -> pd.DataFrame:
+def fetch_predictions(limit: int = 300) -> pd.DataFrame:
     supabase = get_client()
     if supabase is None:
         return pd.DataFrame()
@@ -113,7 +111,7 @@ if pipeline is not None:
         st.warning("The model is available, but the simulation input did not match the pipeline exactly. Showing fallback output.")
 else:
     prob = 0.15
-    st.warning("Model file not found in Railway. Showing dashboard with fallback simulation only.")
+    st.warning("Model file not found in Railway. Showing fallback simulation only.")
 
 col1, col2, col3 = st.columns(3)
 with col1:
@@ -157,5 +155,3 @@ if not predictions_df.empty:
         st.metric("Total Financial Exposure", f"${total_exposure:,.2f}")
 else:
     st.info("No stockout prediction records found in Supabase yet.")
-
-st.caption("Retail Stockout AI Suite | Railway + Supabase Deployment")
