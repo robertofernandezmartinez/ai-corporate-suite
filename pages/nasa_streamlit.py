@@ -1,56 +1,100 @@
 import streamlit as st
 import pandas as pd
-import joblib
-import os
 import plotly.graph_objects as go
-import numpy as np
+from db.supabase_client import get_supabase
 
-# 1. PAGE CONFIGURATION
-st.set_page_config(page_title="NASA Jet Engine RUL", page_icon="✈️", layout="wide")
+st.set_page_config(
+    page_title="NASA Jet Engine RUL",
+    page_icon="✈️",
+    layout="wide"
+)
 
-# 2. ASSET LOADING (Fixed paths for 'pages' folder)
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL_PATH = os.path.join(ROOT_DIR, "04_Models", "nasa_model.pkl")
-DATA_PATH = os.path.join(ROOT_DIR, "05_Results", "predictions_validation_FD001.csv")
+st.markdown("""
+<style>
+    .main { background-color: #0e1117; color: white; }
+    div[data-testid="stMetric"] {
+        background-color: #1e2130;
+        padding: 20px;
+        border-radius: 12px;
+        border: 1px solid #3e4259;
+    }
+    footer {visibility: hidden;}
+</style>
+""", unsafe_allow_html=True)
 
 @st.cache_resource
-def load_assets():
-    if not os.path.exists(MODEL_PATH) or not os.path.exists(DATA_PATH):
-        return None, None
+def get_client():
+    return get_supabase()
+
+def fetch_nasa_predictions(limit: int = 500) -> pd.DataFrame:
+    supabase = get_client()
+    if supabase is None:
+        return pd.DataFrame()
+
     try:
-        m = joblib.load(MODEL_PATH)
-        d = pd.read_csv(DATA_PATH)
-        return m, d
-    except Exception as e:
-        st.error(f"Error loading assets: {e}")
-        return None, None
+        response = (
+            supabase.table("nasa_predictions")
+            .select("prediction_id,unit_id,predicted_rul,timestamp")
+            .limit(limit)
+            .execute()
+        )
+        df = pd.DataFrame(response.data or [])
+        if not df.empty:
+            df["predicted_rul"] = pd.to_numeric(df["predicted_rul"], errors="coerce")
+            df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+            df = df.sort_values("timestamp", ascending=False)
+        return df
+    except Exception:
+        return pd.DataFrame()
 
-model, df_results = load_assets()
+df_results = fetch_nasa_predictions()
 
-if df_results is not None:
-    # Sidebar selection
-    unit_ids = df_results['unit_number'].unique()
-    selected_unit = st.sidebar.selectbox("Engine Unit ID:", unit_ids)
+st.title("✈️ Predictive Maintenance Dashboard")
+st.markdown("---")
 
-    engine_data = df_results[df_results['unit_number'] == selected_unit].sort_values('time_in_cycles')
-    current_cycle = int(engine_data['time_in_cycles'].max())
-    predicted_rul = float(engine_data['predicted_RUL'].iloc[-1])
+if not df_results.empty:
+    unit_ids = sorted(df_results["unit_id"].dropna().astype(str).unique().tolist())
+    selected_unit = st.sidebar.selectbox("Engine Unit ID", unit_ids)
 
-    # DASHBOARD DISPLAY
-    st.title("✈️ Predictive Maintenance Dashboard")
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Total Cycles", current_cycle)
-    m2.metric("Remaining Useful Life", f"{predicted_rul:.0f} cycles")
-    
+    engine_data = df_results[df_results["unit_id"].astype(str) == str(selected_unit)].copy()
+    engine_data = engine_data.sort_values("timestamp")
+
+    latest_row = engine_data.iloc[-1]
+    latest_rul = float(latest_row["predicted_rul"])
+    total_records = len(engine_data)
+
     status = "STABLE"
-    if predicted_rul < 30: status = "CRITICAL"
-    elif predicted_rul < 75: status = "MAINTENANCE REQUIRED"
-    m3.metric("Health Index", status)
+    if latest_rul < 30:
+        status = "CRITICAL"
+    elif latest_rul < 75:
+        status = "MAINTENANCE REQUIRED"
 
-    # Plotly Chart
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        st.metric("Records for Unit", total_records)
+    with m2:
+        st.metric("Remaining Useful Life", f"{latest_rul:.0f} cycles")
+    with m3:
+        st.metric("Health Index", status)
+
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=engine_data['time_in_cycles'], y=engine_data['predicted_RUL'], name="RUL Trend"))
-    fig.update_layout(title="RUL Degradation Curve", template="plotly_dark")
-    st.plotly_chart(fig, use_container_width=True)
+    fig.add_trace(
+        go.Scatter(
+            x=engine_data["timestamp"],
+            y=engine_data["predicted_rul"],
+            mode="lines+markers",
+            name="Predicted RUL"
+        )
+    )
+    fig.update_layout(
+        title="Predicted RUL Over Time",
+        template="plotly_dark",
+        xaxis_title="Timestamp",
+        yaxis_title="Predicted RUL"
+    )
+    st.plotly_chart(fig, width="stretch")
+
+    st.subheader("Latest NASA Prediction Records")
+    st.dataframe(df_results.head(25), width="stretch", hide_index=True)
 else:
-    st.error("Assets not found. Check if '04_Models' and '05_Results' folders exist in root.")
+    st.error("No NASA prediction records found in Supabase.")
