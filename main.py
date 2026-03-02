@@ -1,48 +1,133 @@
-import os
-import logging
-from fastapi import FastAPI, UploadFile, File, Header, HTTPException, Depends
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
+import logging
 
-# Importaciones ajustadas a tu carpeta 'core'
-from core.nasa_predictor import NASAPredictor
-from core.smartport_predictor import SmartPortPredictor
-from core.stockout_predictor import StockoutPredictor
+app = FastAPI(
+    title="AI Corporate Suite",
+    version="2.0.0",
+    description="Enterprise Industrial AI API"
+)
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("AI_Corporate_Suite")
+# 1) Engines initialized as None (lazy initialization pattern)
+stockout_engine = None
+smartport_engine = None
+nasa_engine = None
 
-app = FastAPI(title="AI Corporate Suite API")
 
-# Seguridad
-API_KEY = os.getenv("SUITE_INTERNAL_KEY", "dev_key")
+@app.on_event("startup")
+async def startup_event():
+    """
+    Initialize all ML engines on API startup.
+    If one fails, the API still boots, but that engine will remain offline.
+    """
+    global stockout_engine, smartport_engine, nasa_engine
 
-async def verify_api_key(x_api_key: str = Header(...)):
-    if x_api_key != API_KEY:
-        raise HTTPException(status_code=403, detail="Unauthorized")
-    return x_api_key
+    # --- Load Stockout Engine ---
+    try:
+        from core.stockout_predictor import StockoutPredictor
+        stockout_engine = StockoutPredictor()
+        print("✅ Stockout Engine: ONLINE")
+    except Exception as e:
+        print(f"⚠️ Stockout Load Failed: {e}")
 
-# Inicialización de motores
-nasa_engine = NASAPredictor()
-smartport_engine = SmartPortPredictor()
-stockout_engine = StockoutPredictor()
+    # --- Load SmartPort Engine ---
+    try:
+        from core.smartport_predictor import SmartPortPredictor
+        smartport_engine = SmartPortPredictor()
+        print("✅ SmartPort Engine: ONLINE")
+    except Exception as e:
+        print(f"⚠️ SmartPort Load Failed: {e}")
+
+    # --- Load NASA RUL Engine ---
+    try:
+        from core.nasa_predictor import NASAPredictor
+        nasa_engine = NASAPredictor()
+        print("✅ NASA RUL Engine: ONLINE")
+    except Exception as e:
+        print(f"⚠️ NASA Load Failed: {e}")
+
+
+# CORS middleware (allowing all origins/methods/headers for simplicity in demo mode)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.get("/")
-async def health():
-    return {"status": "Online", "suite": "AI Corporate Suite"}
+def root():
+    """
+    Basic status endpoint to confirm the API is online and which engines are loaded.
+    """
+    return {
+        "status": "online",
+        "suite_version": "2.0.0",
+        "active_engines": {
+            "stockout": stockout_engine is not None,
+            "smartport": smartport_engine is not None,
+            "nasa": nasa_engine is not None
+        }
+    }
 
-@app.post("/predict/nasa", dependencies=[Depends(verify_api_key)])
-async def predict_nasa(file: UploadFile = File(...)):
-    return await nasa_engine.predict_from_file(file)
 
-@app.post("/predict/smartport", dependencies=[Depends(verify_api_key)])
-async def predict_smartport(file: UploadFile = File(...)):
-    return await smartport_engine.predict_from_file(file)
+# --- ENDPOINT: STOCKOUT RISK ---
+@app.post("/stockout/upload", tags=["Inventory Management"])
+async def upload_stockout(file: UploadFile = File(...)):
+    """
+    Upload a CSV file and run stockout risk predictions.
+    """
+    if not stockout_engine:
+        raise HTTPException(status_code=500, detail="Stockout engine not initialized")
 
-@app.post("/predict/stockout", dependencies=[Depends(verify_api_key)])
-async def predict_stockout(file: UploadFile = File(...)):
-    return await stockout_engine.predict_from_file(file)
+    try:
+        print(f"📥 Processing Stockout: {file.filename}")
+        result = await stockout_engine.predict_from_file(file)
+        return JSONResponse(content=result)
+    except Exception as e:
+        logging.error(f"Stockout Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- ENDPOINT: SMARTPORT DELAYS / RISK ---
+@app.post("/smartport/upload", tags=["Maritime Logistics"])
+async def upload_smartport(file: UploadFile = File(...)):
+    """
+    Upload a CSV file and run SmartPort risk predictions.
+    """
+    if not smartport_engine:
+        raise HTTPException(status_code=500, detail="SmartPort engine not initialized")
+
+    try:
+        print(f"📥 Processing SmartPort: {file.filename}")
+        result = await smartport_engine.predict_from_file(file)
+        return JSONResponse(content=result)
+    except Exception as e:
+        logging.error(f"SmartPort Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- ENDPOINT: NASA RUL (Engine Health) ---
+@app.post("/nasa/upload", tags=["Predictive Maintenance"])
+async def upload_nasa(file: UploadFile = File(...)):
+    """
+    Upload a CSV file and run NASA Remaining Useful Life predictions.
+    """
+    if not nasa_engine:
+        raise HTTPException(status_code=500, detail="NASA engine not initialized")
+
+    try:
+        print(f"📥 Processing NASA RUL: {file.filename}")
+        result = await nasa_engine.predict_from_file(file)
+        return JSONResponse(content=result)
+    except Exception as e:
+        logging.error(f"NASA Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    # Standard local port 8000
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
