@@ -1,14 +1,29 @@
+# Python
 __pycache__/
 *.py[cod]
 venv/
+
+# Environment
 .env
-*.pkl
-*.pickle
-*.csv
-.DS_Store
-.ipynb_checkpoints/
 .env.save
 service_account.json
-data/
-scripts/
+
+# Mac
+.DS_Store
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Keep models (needed in Railway demo)
+# *.pkl  <-- REMOVED THIS LINE
+
+# Keep CSV demo data
+# *.csv  <-- REMOVED THIS LINE
+
+# Do NOT ignore data folder
+# data/  <-- REMOVED THIS LINE
+
+# Do NOT ignore scripts
+# scripts/ <-- REMOVED THIS LINE
+
 requirements_smartport.txt

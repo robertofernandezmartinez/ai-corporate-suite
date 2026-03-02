@@ -5,33 +5,15 @@ import joblib
 from pathlib import Path
 from db.supabase_client import get_supabase
 
-st.set_page_config(
-    page_title="Stockout AI Suite | Strategic Replenishment",
-    page_icon="📦",
-    layout="wide"
-)
-
-st.markdown("""
-<style>
-    footer {visibility: hidden;}
-    .stockout-box {
-        padding: 1rem;
-        border-radius: 14px;
-        border: 1px solid rgba(128,128,128,0.25);
-        background: rgba(127,127,127,0.06);
-    }
-</style>
-""", unsafe_allow_html=True)
+st.set_page_config(page_title="Stockout AI | Dashboard", page_icon="📦", layout="wide")
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 MODEL_PATH = ROOT_DIR / "models" / "stockout_model.pkl"
 
 @st.cache_resource
 def load_model():
-    if not MODEL_PATH.exists():
-        return None
     try:
-        return joblib.load(MODEL_PATH)
+        return joblib.load(MODEL_PATH) if MODEL_PATH.exists() else None
     except Exception:
         return None
 
@@ -39,119 +21,65 @@ def load_model():
 def get_client():
     return get_supabase()
 
-def fetch_predictions(limit: int = 300) -> pd.DataFrame:
+def fetch_latest_batch_id() -> str | None:
     supabase = get_client()
-    if supabase is None:
-        return pd.DataFrame()
+    if not supabase:
+        return None
+    resp = (
+        supabase.table("stockout_predictions")
+        .select("batch_id,created_at")
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    rows = resp.data or []
+    if not rows:
+        return None
+    return rows[0].get("batch_id")
 
-    try:
-        response = (
-            supabase.table("stockout_predictions")
-            .select("prediction_id,product_id,risk_score,risk_level,financial_impact,timestamp")
-            .limit(limit)
-            .execute()
-        )
-        df = pd.DataFrame(response.data or [])
-        if not df.empty and "timestamp" in df.columns:
-            df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-            df = df.sort_values("timestamp", ascending=False)
-        return df
-    except Exception:
-        return pd.DataFrame()
+def fetch_latest_batch_data(batch_id: str, limit: int = 5000) -> pd.DataFrame:
+    supabase = get_client()
+    resp = (
+        supabase.table("stockout_predictions")
+        .select("prediction_id,product_id,risk_score,risk_level,financial_impact,timestamp,batch_id,created_at")
+        .eq("batch_id", batch_id)
+        .limit(limit)
+        .execute()
+    )
+    df = pd.DataFrame(resp.data or [])
+    if not df.empty:
+        df["risk_score"] = pd.to_numeric(df["risk_score"], errors="coerce")
+        df["financial_impact"] = pd.to_numeric(df["financial_impact"], errors="coerce").fillna(0)
+    return df
 
 pipeline = load_model()
-predictions_df = fetch_predictions()
 
-st.sidebar.title("Simulation Panel")
-
-with st.sidebar:
-    st.subheader("📦 Inventory Inputs")
-    inv_level = st.slider("Current Stock (Units)", 0, 5000, 450)
-    units_sold = st.slider("Units Sold (Last 24h)", 0, 500, 30)
-
-    st.subheader("💰 Pricing")
-    price = st.number_input("Our Price ($)", min_value=0.0, value=150.0)
-    comp_price = st.number_input("Competitor Price ($)", min_value=0.0, value=145.0)
-    discount = st.slider("Discount (%)", 0.0, 0.5, 0.1)
-
-    st.subheader("🌍 Context")
-    region = st.selectbox("Region", ["North", "South", "East", "West", "Central"])
-    category = st.selectbox("Category", ["Electronics", "Fashion", "Home", "Toys", "Groceries"])
-    weather = st.selectbox("Weather Condition", ["Sunny", "Rainy", "Cloudy"])
-    seasonality = st.selectbox("Seasonality", ["Spring", "Summer", "Autumn", "Winter"])
-    holiday_promo = st.selectbox("Holiday / Promotion", ["0", "1"])
-    is_weekend = st.checkbox("Is it a Weekend?")
-
-st.title("📦 Strategic Stockout Early Warning System")
+st.title("📦 Stockout Risk Dashboard")
 st.markdown("---")
 
-input_df = pd.DataFrame({
-    "store_id": ["S_DEMO"],
-    "product_id": ["P_DEMO"],
-    "category": [category],
-    "region": [region],
-    "weather": [weather],
-    "holiday_promo": [holiday_promo],
-    "seasonality": [seasonality],
-    "month": ["2"],
-    "day_of_week": ["6" if is_weekend else "3"],
-    "inventory_level": [float(inv_level)],
-    "units_sold": [float(units_sold)],
-    "price": [float(price)],
-    "discount": [float(discount)],
-    "competitor_pricing": [float(comp_price)],
-    "is_weekend": [1.0 if is_weekend else 0.0]
-})
+batch_id = fetch_latest_batch_id()
+if not batch_id:
+    st.warning("No Stockout prediction batches found yet. Upload a dataset first.")
+    st.stop()
 
-if pipeline is not None:
-    try:
-        prob = float(pipeline.predict_proba(input_df)[0][1])
-    except Exception:
-        prob = 0.15
-        st.warning("The model is available, but the simulation input did not match the pipeline exactly. Showing fallback output.")
-else:
-    prob = 0.15
-    st.warning("Model file not found in Railway. Showing fallback simulation only.")
+df = fetch_latest_batch_data(batch_id)
+if df.empty:
+    st.warning("Latest Stockout batch returned no rows.")
+    st.stop()
 
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.metric("Risk Probability", f"{prob * 100:.1f}%")
-with col2:
-    if prob > 0.75:
-        status = "🚨 CRITICAL"
-    elif prob > 0.40:
-        status = "⚠️ WARNING"
-    else:
-        status = "✅ SAFE"
-    st.metric("Inventory Health", status)
-with col3:
-    financial_impact = prob * price * units_sold
-    st.metric("Revenue at Risk", f"${financial_impact:,.2f}")
+total = len(df)
+high = int(df["risk_level"].isin(["HIGH", "CRITICAL"]).sum())
+exposure = float(df["financial_impact"].sum())
 
-st.subheader("Safety Stock Analysis")
-st.progress(float(np.clip(prob, 0.0, 1.0)))
+m1, m2, m3 = st.columns(3)
+with m1:
+    st.metric("Records (Latest Batch)", total)
+with m2:
+    st.metric("High/Critical Alerts", high)
+with m3:
+    st.metric("Total Exposure", f"${exposure:,.2f}")
 
-st.markdown("---")
-if prob > 0.75:
-    st.error(f"Immediate action recommended for **{category}** in **{region}**.")
-elif prob > 0.40:
-    st.warning(f"Watchlist status: monitor **{category}** sales velocity and replenishment timing.")
-else:
-    st.success("Inventory appears healthy for the current scenario.")
+st.subheader("Recent Predictions (Latest Batch)")
+st.dataframe(df.head(50), width="stretch", hide_index=True)
 
-st.markdown("---")
-st.subheader("Recent Stockout Predictions")
-
-if not predictions_df.empty:
-    st.dataframe(predictions_df.head(25), width="stretch", hide_index=True)
-
-    high_risk = int(predictions_df["risk_level"].isin(["HIGH", "CRITICAL"]).sum())
-    total_exposure = float(pd.to_numeric(predictions_df["financial_impact"], errors="coerce").fillna(0).sum())
-
-    k1, k2 = st.columns(2)
-    with k1:
-        st.metric("High / Critical Alerts", high_risk)
-    with k2:
-        st.metric("Total Financial Exposure", f"${total_exposure:,.2f}")
-else:
-    st.info("No stockout prediction records found in Supabase yet.")
+st.caption(f"Showing batch_id: {batch_id}")
