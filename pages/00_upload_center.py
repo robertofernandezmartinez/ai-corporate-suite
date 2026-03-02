@@ -2,6 +2,7 @@ import os
 import requests
 import streamlit as st
 
+
 st.set_page_config(
     page_title="Upload Center | AI Corporate Suite",
     page_icon="⬆️",

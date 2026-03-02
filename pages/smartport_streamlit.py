@@ -5,6 +5,7 @@ import pandas as pd
 import plotly.express as px
 from db.supabase_client import get_supabase
 
+
 st.set_page_config(page_title="SmartPort AI | Command Center", page_icon="⚓", layout="wide")
 
 @st.cache_resource

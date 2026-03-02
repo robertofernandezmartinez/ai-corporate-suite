@@ -1,7 +1,6 @@
 import os
 import sys
 from datetime import datetime, timedelta, timezone
-
 from db.supabase_client import get_supabase
 
 

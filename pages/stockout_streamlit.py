@@ -5,6 +5,7 @@ import joblib
 from pathlib import Path
 from db.supabase_client import get_supabase
 
+
 st.set_page_config(page_title="Stockout AI | Dashboard", page_icon="📦", layout="wide")
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
