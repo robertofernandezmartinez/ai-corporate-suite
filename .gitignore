@@ -27,3 +27,9 @@ service_account.json
 # scripts/ <-- REMOVED THIS LINE
 
 requirements_smartport.txt
+
+# --- Raw data (do not commit large files) ---
+data/raw/tracking_db.csv
+
+# Allow the demo dataset to be committed
+!data/raw/tracking_db_demo.csv
