@@ -3,17 +3,36 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import logging
+import os
+
+# =========================
+# AI Corporate Suite (API)
+# =========================
+# This FastAPI service hosts 3 independent ML engines:
+# - Stockout (Retail inventory risk)
+# - SmartPort (Maritime risk)
+# - NASA RUL (Predictive maintenance)
+#
+# The UI (Streamlit) should call this API via HTTP using API_BASE_URL.
+# In Railway, the service is started with:
+#   uvicorn main:app --host 0.0.0.0 --port $PORT
+#
+# Note: The __main__ block below is ONLY for local development. Railway ignores it.
 
 app = FastAPI(
     title="AI Corporate Suite",
     version="2.0.0",
-    description="Enterprise Industrial AI API"
+    description="Enterprise Industrial AI API",
 )
 
-# 1) Engines initialized as None (lazy initialization pattern)
+# Engines initialized as None (lazy init)
 stockout_engine = None
 smartport_engine = None
 nasa_engine = None
+
+# Basic logger
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("ai-corporate-suite-api")
 
 
 @app.on_event("startup")
@@ -49,7 +68,7 @@ async def startup_event():
         print(f"⚠️ NASA Load Failed: {e}")
 
 
-# CORS middleware (allowing all origins/methods/headers for simplicity in demo mode)
+# CORS middleware (demo-friendly)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -64,13 +83,14 @@ def root():
     Basic status endpoint to confirm the API is online and which engines are loaded.
     """
     return {
-        "status": "online",
+        "status": "Online",
+        "suite": "AI Corporate Suite",
         "suite_version": "2.0.0",
         "active_engines": {
             "stockout": stockout_engine is not None,
             "smartport": smartport_engine is not None,
-            "nasa": nasa_engine is not None
-        }
+            "nasa": nasa_engine is not None,
+        },
     }
 
 
@@ -88,7 +108,7 @@ async def upload_stockout(file: UploadFile = File(...)):
         result = await stockout_engine.predict_from_file(file)
         return JSONResponse(content=result)
     except Exception as e:
-        logging.error(f"Stockout Error: {e}")
+        logger.error(f"Stockout Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -103,10 +123,17 @@ async def upload_smartport(file: UploadFile = File(...)):
 
     try:
         print(f"📥 Processing SmartPort: {file.filename}")
+
+        # Run inference
         result = await smartport_engine.predict_from_file(file)
+
+        # DEBUG: confirm whether Supabase client exists inside the SmartPort engine.
+        # If this prints False, the engine will not persist rows to Supabase.
+        print(f"SMARTPORT: supabase client present? {bool(getattr(smartport_engine, 'supabase', None))}")
+
         return JSONResponse(content=result)
     except Exception as e:
-        logging.error(f"SmartPort Error: {e}")
+        logger.error(f"SmartPort Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -124,10 +151,11 @@ async def upload_nasa(file: UploadFile = File(...)):
         result = await nasa_engine.predict_from_file(file)
         return JSONResponse(content=result)
     except Exception as e:
-        logging.error(f"NASA Error: {e}")
+        logger.error(f"NASA Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
-    # Standard local port 8000
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    # Local development only (Railway ignores this block).
+    # Railway uses: uvicorn main:app --host 0.0.0.0 --port $PORT
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
