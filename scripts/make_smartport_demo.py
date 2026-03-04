@@ -22,6 +22,25 @@ DATETIME_CANDIDATES = {
     "etd_schedule",
 }
 
+def _to_epoch_seconds(parsed: pd.Series) -> pd.Series:
+    """
+    Convert a datetime64[ns] Series to epoch seconds (float).
+    NaT becomes NaN.
+    """
+    # Ensure datetime dtype
+    parsed = pd.to_datetime(parsed, errors="coerce", dayfirst=True)
+
+    # pandas datetime64[ns] -> int64 nanoseconds since epoch
+    # NaT becomes the minimum int64, so we mask it before converting
+    ns = parsed.astype("int64")
+
+    # Mask NaT (where parsed is NaT)
+    ns = ns.where(parsed.notna(), np.nan)
+
+    # Convert ns -> seconds
+    return (ns / 1e9).astype("float64")
+
+
 def _convert_datetime_cols_to_epoch(df: pd.DataFrame) -> pd.DataFrame:
     """
     Convert datetime-like columns (strings) to epoch seconds (float).
@@ -32,17 +51,14 @@ def _convert_datetime_cols_to_epoch(df: pd.DataFrame) -> pd.DataFrame:
     # 1) Convert known datetime candidate columns if present
     for col in DATETIME_CANDIDATES:
         if col in df.columns:
-            parsed = pd.to_datetime(df[col], errors="coerce", dayfirst=True)
-            df[col] = (parsed.view("int64") / 1e9).astype("float64")
+            df[col] = _to_epoch_seconds(df[col])
 
     # 2) Heuristic: if any remaining object column looks mostly like datetime, convert it too
     obj_cols = df.select_dtypes(include=["object"]).columns.tolist()
     for col in obj_cols:
-        # Quick datetime parse attempt
         parsed = pd.to_datetime(df[col], errors="coerce", dayfirst=True)
-        # If a meaningful fraction parses, treat it as datetime
         if parsed.notna().mean() > 0.7:
-            df[col] = (parsed.view("int64") / 1e9).astype("float64")
+            df[col] = _to_epoch_seconds(df[col])
 
     return df
 
