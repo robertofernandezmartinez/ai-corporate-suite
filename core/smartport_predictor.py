@@ -11,9 +11,6 @@ import __main__
 
 logger = logging.getLogger(__name__)
 
-print("SUPABASE CLIENT:", self.supabase)
-
-
 # ============================================================
 # Feature Engineering Class (Mandatory for Joblib Loading) 
 # ============================================================ 
