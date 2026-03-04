@@ -5,22 +5,31 @@ import joblib
 from pathlib import Path
 from db.supabase_client import get_supabase
 
+# =========================
+# Stockout Dashboard
+# =========================
+# Reads stockout predictions from Supabase and shows ONLY the latest batch.
 
 st.set_page_config(page_title="Stockout AI | Dashboard", page_icon="📦", layout="wide")
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 MODEL_PATH = ROOT_DIR / "models" / "stockout_model.pkl"
 
+
 @st.cache_resource
 def load_model():
+    # Model is not strictly required for the dashboard since we read predictions from Supabase,
+    # but we keep this for potential local inference or future extensions.
     try:
         return joblib.load(MODEL_PATH) if MODEL_PATH.exists() else None
     except Exception:
         return None
 
+
 @st.cache_resource
 def get_client():
     return get_supabase()
+
 
 def fetch_latest_batch_id() -> str | None:
     supabase = get_client()
@@ -38,6 +47,7 @@ def fetch_latest_batch_id() -> str | None:
         return None
     return rows[0].get("batch_id")
 
+
 def fetch_latest_batch_data(batch_id: str, limit: int = 5000) -> pd.DataFrame:
     supabase = get_client()
     resp = (
@@ -52,6 +62,7 @@ def fetch_latest_batch_data(batch_id: str, limit: int = 5000) -> pd.DataFrame:
         df["risk_score"] = pd.to_numeric(df["risk_score"], errors="coerce")
         df["financial_impact"] = pd.to_numeric(df["financial_impact"], errors="coerce").fillna(0)
     return df
+
 
 pipeline = load_model()
 

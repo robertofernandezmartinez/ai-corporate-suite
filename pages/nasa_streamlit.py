@@ -3,12 +3,18 @@ import pandas as pd
 import plotly.graph_objects as go
 from db.supabase_client import get_supabase
 
+# =========================
+# NASA RUL Dashboard
+# =========================
+# Reads NASA predictions from Supabase and shows ONLY the latest batch.
 
 st.set_page_config(page_title="NASA Predictive Maintenance", page_icon="✈️", layout="wide")
+
 
 @st.cache_resource
 def get_client():
     return get_supabase()
+
 
 def fetch_latest_batch_id() -> str | None:
     supabase = get_client()
@@ -26,6 +32,7 @@ def fetch_latest_batch_id() -> str | None:
         return None
     return rows[0].get("batch_id")
 
+
 def fetch_latest_batch_data(batch_id: str, limit: int = 20000) -> pd.DataFrame:
     supabase = get_client()
     resp = (
@@ -42,6 +49,7 @@ def fetch_latest_batch_data(batch_id: str, limit: int = 20000) -> pd.DataFrame:
         df["predicted_rul"] = pd.to_numeric(df["predicted_rul"], errors="coerce")
         df = df.sort_values(["unit_id", "cycle"])
     return df
+
 
 st.title("✈️ Predictive Maintenance Dashboard")
 st.markdown("---")
@@ -80,19 +88,21 @@ with m3:
     st.metric("Health Index", status)
 
 fig = go.Figure()
-fig.add_trace(go.Scatter(
-    x=engine_df["cycle"],
-    y=engine_df["predicted_rul"],
-    mode="lines+markers",
-    name="Predicted RUL"
-))
+fig.add_trace(
+    go.Scatter(
+        x=engine_df["cycle"],
+        y=engine_df["predicted_rul"],
+        mode="lines+markers",
+        name="Predicted RUL",
+    )
+)
 fig.add_hline(y=75, line_dash="dash", annotation_text="Warning threshold")
 fig.add_hline(y=30, line_dash="dash", annotation_text="Critical threshold")
 fig.update_layout(
     title="RUL Degradation Curve (Latest Batch)",
     xaxis_title="Cycle",
     yaxis_title="Predicted RUL",
-    height=520
+    height=520,
 )
 st.plotly_chart(fig, width="stretch")
 

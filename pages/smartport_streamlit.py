@@ -5,17 +5,27 @@ import pandas as pd
 import plotly.express as px
 from db.supabase_client import get_supabase
 
+# =========================
+# SmartPort Dashboard
+# =========================
+# This dashboard reads predictions from Supabase and ONLY shows the latest batch_id
+# to avoid mixing results from different uploads.
 
 st.set_page_config(page_title="SmartPort AI | Command Center", page_icon="⚓", layout="wide")
 
+
 @st.cache_resource
 def get_client():
+    # Cached Supabase client across reruns
     return get_supabase()
 
+
 def fetch_latest_batch_id() -> str | None:
+    # Get the most recent batch by created_at
     supabase = get_client()
     if not supabase:
         return None
+
     resp = (
         supabase.table("smartport_predictions")
         .select("batch_id,created_at")
@@ -28,7 +38,9 @@ def fetch_latest_batch_id() -> str | None:
         return None
     return rows[0].get("batch_id")
 
+
 def fetch_latest_batch_data(batch_id: str, limit: int = 5000) -> pd.DataFrame:
+    # Fetch predictions for the given batch_id only
     supabase = get_client()
     resp = (
         supabase.table("smartport_predictions")
@@ -42,7 +54,9 @@ def fetch_latest_batch_data(batch_id: str, limit: int = 5000) -> pd.DataFrame:
         df["risk_score"] = pd.to_numeric(df["risk_score"], errors="coerce")
     return df
 
+
 def send_telegram_message(message: str) -> tuple[bool, str]:
+    # Optional: send alerts via Telegram if tokens are configured
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
@@ -53,6 +67,7 @@ def send_telegram_message(message: str) -> tuple[bool, str]:
     if r.status_code == 200:
         return True, "Telegram message sent."
     return False, f"Telegram API error {r.status_code}: {r.text}"
+
 
 st.title("⚓ SmartPort AI | Command Center")
 st.markdown("---")
@@ -67,12 +82,14 @@ if df.empty:
     st.warning("Latest SmartPort batch returned no rows.")
     st.stop()
 
+
 def recommended_action(level: str) -> str:
     return {
         "CRITICAL": "IMMEDIATE: Tugboat standby & route deviation review.",
         "WARNING": "PROACTIVE: Increase monitoring and validate AIS stability.",
-        "NORMAL": "ROUTINE: Vessel on standard trajectory."
+        "NORMAL": "ROUTINE: Vessel on standard trajectory.",
     }.get(level, "ROUTINE: Vessel on standard trajectory.")
+
 
 df["recommended_action"] = df["risk_level"].map(recommended_action)
 
@@ -96,9 +113,13 @@ with left:
     dist = df["risk_level"].value_counts().reset_index()
     dist.columns = ["risk_level", "count"]
 
-    fig = px.bar(dist, x="risk_level", y="count", color="risk_level",
-                 color_discrete_map={"CRITICAL": "#FF4B4B", "WARNING": "#F4C542", "NORMAL": "#12B76A"},
-                 title="Risk Level Distribution (Latest Batch)")
+    fig = px.bar(
+        dist,
+        x="risk_level",
+        y="count",
+        color="risk_level",
+        title="Risk Level Distribution (Latest Batch)",
+    )
     st.plotly_chart(fig, width="stretch")
 
     show_cols = ["prediction_id", "vessel_index", "risk_score", "risk_level", "recommended_action", "timestamp"]
@@ -113,12 +134,15 @@ with right:
     row = df[df["vessel_index"].astype(int).astype(str) == str(selected_vessel)].iloc[0]
 
     st.info(f"**AI Recommendation:**\n{row['recommended_action']}")
-    dispatch_order = st.selectbox("Select Dispatch Order", [
-        "Immediate Berth Reassignment",
-        "Priority Inspection Hold",
-        "AIS Protocol Synchronization",
-        "Manual Port Clearance"
-    ])
+    dispatch_order = st.selectbox(
+        "Select Dispatch Order",
+        [
+            "Immediate Berth Reassignment",
+            "Priority Inspection Hold",
+            "AIS Protocol Synchronization",
+            "Manual Port Clearance",
+        ],
+    )
 
     if st.button("Execute & Notify Telegram"):
         msg = (
