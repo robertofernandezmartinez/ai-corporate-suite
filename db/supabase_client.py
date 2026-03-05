@@ -82,3 +82,140 @@ def get_supabase() -> Client | None:
             raise
 
         return None
+
+def get_smartport_batches(limit: int = 20):
+    """
+    Fetch SmartPort prediction batches from Supabase.
+    """
+
+    try:
+        response = (
+            supabase
+            .table("smartport_predictions")
+            .select("batch_id, prediction, created_at")
+            .order("created_at", desc=True)
+            .limit(5000)
+            .execute()
+        )
+
+        rows = response.data
+
+        if not rows:
+            return []
+
+        import pandas as pd
+        df = pd.DataFrame(rows)
+
+        batches = []
+
+        for batch_id, group in df.groupby("batch_id"):
+
+            batches.append({
+                "batch_id": batch_id,
+                "records": len(group),
+                "created_at": group["created_at"].max()
+            })
+
+        batches = sorted(
+            batches,
+            key=lambda x: x["created_at"],
+            reverse=True
+        )
+
+        return batches[:limit]
+
+    except Exception as e:
+        print(f"Supabase SmartPort fetch error: {e}")
+        return []
+
+
+def get_stockout_batches(limit: int = 20):
+    """
+    Fetch Stockout prediction batches from Supabase.
+    """
+
+    try:
+        response = (
+            supabase
+            .table("stockout_predictions")
+            .select("batch_id, prediction, created_at")
+            .order("created_at", desc=True)
+            .limit(5000)
+            .execute()
+        )
+
+        rows = response.data
+
+        if not rows:
+            return []
+
+        import pandas as pd
+        df = pd.DataFrame(rows)
+
+        batches = []
+
+        for batch_id, group in df.groupby("batch_id"):
+
+            batches.append({
+                "batch_id": batch_id,
+                "records": len(group),
+                "created_at": group["created_at"].max()
+            })
+
+        batches = sorted(
+            batches,
+            key=lambda x: x["created_at"],
+            reverse=True
+        )
+
+        return batches[:limit]
+
+    except Exception as e:
+        print(f"Supabase Stockout fetch error: {e}")
+        return []
+
+
+def get_nasa_batches(limit: int = 20):
+    """
+    Fetch NASA RUL prediction batches from Supabase.
+    """
+
+    try:
+        response = (
+            supabase
+            .table("nasa_predictions")
+            .select("batch_id, prediction, created_at")
+            .order("created_at", desc=True)
+            .limit(5000)
+            .execute()
+        )
+
+        rows = response.data
+
+        if not rows:
+            return []
+
+        import pandas as pd
+        df = pd.DataFrame(rows)
+
+        batches = []
+
+        for batch_id, group in df.groupby("batch_id"):
+
+            batches.append({
+                "batch_id": batch_id,
+                "records": len(group),
+                "created_at": group["created_at"].max()
+            })
+
+        batches = sorted(
+            batches,
+            key=lambda x: x["created_at"],
+            reverse=True
+        )
+
+        return batches[:limit]
+
+    except Exception as e:
+        print(f"Supabase NASA fetch error: {e}")
+        return []

@@ -1,113 +1,320 @@
+import os
+import requests
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
+import plotly.express as px
+
 from db.supabase_client import get_supabase
+from db.supabase_client import get_smartport_batches
+
 
 # =========================
-# NASA RUL Dashboard
+# SmartPort Dashboard
 # =========================
-# Reads NASA predictions from Supabase and shows ONLY the latest batch.
 
-st.set_page_config(page_title="NASA Predictive Maintenance", page_icon="✈️", layout="wide")
+st.set_page_config(
+    page_title="SmartPort AI | Command Center",
+    page_icon="⚓",
+    layout="wide"
+)
 
+
+# -------------------------
+# Supabase Client
+# -------------------------
 
 @st.cache_resource
 def get_client():
+    # Cached Supabase client across reruns
     return get_supabase()
 
 
-def fetch_latest_batch_id() -> str | None:
+# -------------------------
+# System Metrics
+# -------------------------
+
+def fetch_system_metrics():
+
+    supabase = get_client()
+    if not supabase:
+        return 0, 0, None
+
+    # total batches
+    batch_resp = (
+        supabase.table("smartport_predictions")
+        .select("batch_id")
+        .execute()
+    )
+
+    batch_rows = batch_resp.data or []
+
+    total_predictions = len(batch_rows)
+
+    unique_batches = len(set([r["batch_id"] for r in batch_rows]))
+
+    latest_resp = (
+        supabase.table("smartport_predictions")
+        .select("created_at")
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+
+    latest_rows = latest_resp.data or []
+
+    latest_run = latest_rows[0]["created_at"] if latest_rows else None
+
+    return unique_batches, total_predictions, latest_run
+
+
+# -------------------------
+# Latest Batch
+# -------------------------
+
+def fetch_latest_batch_id():
+
     supabase = get_client()
     if not supabase:
         return None
+
     resp = (
-        supabase.table("nasa_predictions")
+        supabase.table("smartport_predictions")
         .select("batch_id,created_at")
         .order("created_at", desc=True)
         .limit(1)
         .execute()
     )
+
     rows = resp.data or []
+
     if not rows:
         return None
-    return rows[0].get("batch_id")
+
+    return rows[0]["batch_id"]
 
 
-def fetch_latest_batch_data(batch_id: str, limit: int = 20000) -> pd.DataFrame:
+def fetch_latest_batch_data(batch_id: str, limit: int = 5000):
+
     supabase = get_client()
+
     resp = (
-        supabase.table("nasa_predictions")
-        .select("prediction_id,unit_id,cycle,predicted_rul,timestamp,batch_id,created_at")
+        supabase.table("smartport_predictions")
+        .select("prediction_id,vessel_index,risk_score,risk_level,timestamp,batch_id,created_at")
         .eq("batch_id", batch_id)
         .limit(limit)
         .execute()
     )
+
     df = pd.DataFrame(resp.data or [])
+
     if not df.empty:
-        df["unit_id"] = pd.to_numeric(df["unit_id"], errors="coerce")
-        df["cycle"] = pd.to_numeric(df["cycle"], errors="coerce")
-        df["predicted_rul"] = pd.to_numeric(df["predicted_rul"], errors="coerce")
-        df = df.sort_values(["unit_id", "cycle"])
+        df["risk_score"] = pd.to_numeric(df["risk_score"], errors="coerce")
+
     return df
 
 
-st.title("✈️ Predictive Maintenance Dashboard")
+# -------------------------
+# Telegram Alert
+# -------------------------
+
+def send_telegram_message(message: str):
+
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+
+    if not token or not chat_id:
+        return False, "Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID."
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+
+    r = requests.post(
+        url,
+        json={"chat_id": chat_id, "text": message},
+        timeout=20
+    )
+
+    if r.status_code == 200:
+        return True, "Telegram message sent."
+
+    return False, f"Telegram API error {r.status_code}"
+
+
+# =========================
+# UI
+# =========================
+
+st.title("⚓ SmartPort AI | Command Center")
+
 st.markdown("---")
 
+
+# -------------------------
+# SYSTEM METRICS (NEW)
+# -------------------------
+
+total_batches, total_predictions, last_run = fetch_system_metrics()
+
+m1, m2, m3 = st.columns(3)
+
+with m1:
+    st.metric("Total Prediction Batches", total_batches)
+
+with m2:
+    st.metric("Total Predictions Stored", total_predictions)
+
+with m3:
+    st.metric("Last System Run", last_run if last_run else "N/A")
+
+
+st.markdown("---")
+
+
+# -------------------------
+# Latest Batch
+# -------------------------
+
 batch_id = fetch_latest_batch_id()
+
 if not batch_id:
-    st.error("No NASA prediction batches found yet. Upload a dataset first.")
+    st.warning("No SmartPort prediction batches found yet. Upload a dataset first.")
     st.stop()
 
 df = fetch_latest_batch_data(batch_id)
+
 if df.empty:
-    st.error("Latest NASA batch exists but returned no rows.")
+    st.warning("Latest SmartPort batch returned no rows.")
     st.stop()
 
-unit_ids = sorted(df["unit_id"].dropna().astype(int).astype(str).unique().tolist())
-selected_unit = st.sidebar.selectbox("Engine Unit ID", unit_ids)
 
-engine_df = df[df["unit_id"].astype(int).astype(str) == str(selected_unit)].copy()
-engine_df = engine_df.sort_values("cycle")
+# -------------------------
+# Derived Columns
+# -------------------------
 
-latest_rul = float(engine_df["predicted_rul"].iloc[-1])
-total_cycles = int(engine_df["cycle"].iloc[-1])
+def recommended_action(level):
 
-status = "STABLE"
-if latest_rul < 30:
-    status = "CRITICAL"
-elif latest_rul < 75:
-    status = "MAINTENANCE REQUIRED"
+    return {
+        "CRITICAL": "IMMEDIATE: Tugboat standby & route deviation review.",
+        "WARNING": "PROACTIVE: Increase monitoring and validate AIS stability.",
+        "NORMAL": "ROUTINE: Vessel on standard trajectory.",
+    }.get(level, "ROUTINE: Vessel on standard trajectory.")
+
+
+df["recommended_action"] = df["risk_level"].map(recommended_action)
+
+
+# -------------------------
+# KPIs
+# -------------------------
+
+total = len(df)
+critical = int((df["risk_level"] == "CRITICAL").sum())
+avg_risk = float(df["risk_score"].fillna(0).mean())
+
 
 m1, m2, m3 = st.columns(3)
+
 with m1:
-    st.metric("Total Cycles", total_cycles)
+    st.metric("Active Vessel Records", total)
+
 with m2:
-    st.metric("Remaining Useful Life", f"{latest_rul:.0f} cycles")
+    st.metric("Critical Alerts", critical)
+
 with m3:
-    st.metric("Health Index", status)
+    st.metric("Average Risk Score", f"{avg_risk:.2f}")
 
-fig = go.Figure()
-fig.add_trace(
-    go.Scatter(
-        x=engine_df["cycle"],
-        y=engine_df["predicted_rul"],
-        mode="lines+markers",
-        name="Predicted RUL",
+
+# -------------------------
+# Layout
+# -------------------------
+
+left, right = st.columns([2, 1])
+
+
+# -------------------------
+# Visualization
+# -------------------------
+
+with left:
+
+    st.subheader("Live Vessel Risk Monitor")
+
+    dist = df["risk_level"].value_counts().reset_index()
+
+    dist.columns = ["risk_level", "count"]
+
+    fig = px.bar(
+        dist,
+        x="risk_level",
+        y="count",
+        color="risk_level",
+        title="Risk Level Distribution (Latest Batch)",
     )
-)
-fig.add_hline(y=75, line_dash="dash", annotation_text="Warning threshold")
-fig.add_hline(y=30, line_dash="dash", annotation_text="Critical threshold")
-fig.update_layout(
-    title="RUL Degradation Curve (Latest Batch)",
-    xaxis_title="Cycle",
-    yaxis_title="Predicted RUL",
-    height=520,
-)
-st.plotly_chart(fig, width="stretch")
 
-st.markdown("---")
-st.subheader("Latest Records (this batch)")
-st.dataframe(engine_df.tail(25).iloc[::-1], width="stretch", hide_index=True)
+    st.plotly_chart(fig, width="stretch")
+
+    show_cols = [
+        "prediction_id",
+        "vessel_index",
+        "risk_score",
+        "risk_level",
+        "recommended_action",
+        "timestamp",
+    ]
+
+    st.dataframe(
+        df[show_cols].head(50),
+        width="stretch",
+        hide_index=True
+    )
+
+
+# -------------------------
+# Tactical Control
+# -------------------------
+
+with right:
+
+    st.subheader("🕹️ Tactical Control")
+
+    vessel_options = df["vessel_index"].astype(int).astype(str).unique().tolist()
+
+    selected_vessel = st.selectbox(
+        "Select Target Vessel",
+        vessel_options
+    )
+
+    row = df[df["vessel_index"].astype(int).astype(str) == str(selected_vessel)].iloc[0]
+
+    st.info(f"**AI Recommendation:**\n{row['recommended_action']}")
+
+    dispatch_order = st.selectbox(
+        "Select Dispatch Order",
+        [
+            "Immediate Berth Reassignment",
+            "Priority Inspection Hold",
+            "AIS Protocol Synchronization",
+            "Manual Port Clearance",
+        ],
+    )
+
+    if st.button("Execute & Notify Telegram"):
+
+        msg = (
+            f"SMARTPORT COMMAND\n"
+            f"Vessel Index: {selected_vessel}\n"
+            f"Risk Level: {row['risk_level']}\n"
+            f"Risk Score: {float(row['risk_score']):.3f}\n"
+            f"Dispatch: {dispatch_order}\n"
+            f"Recommendation: {row['recommended_action']}\n"
+            f"Batch: {batch_id}"
+        )
+
+        ok, info = send_telegram_message(msg)
+
+        if ok:
+            st.success(info)
+        else:
+            st.error(info)
+
 
 st.caption(f"Showing batch_id: {batch_id}")
