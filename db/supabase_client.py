@@ -16,70 +16,32 @@
 import os
 from supabase import create_client, Client
 
-
 SUPABASE_URL = "https://tqxbxyyrnvpjhbizopsg.supabase.co"
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 
 
 def get_supabase() -> Client | None:
     """
-    Returns a Supabase client using service key.
-    Returns None if key is missing.
+    Return a Supabase client using any supported environment variable name.
+
+    Supported names:
+    - SUPABASE_SERVICE_ROLE_KEY
+    - SUPABASE_SERVICE_KEY
+    - SUPABASE_KEY
+    - SUPABASE_ANON_KEY
     """
-    if not SUPABASE_KEY:
-        print("⚠️ SUPABASE_SERVICE_KEY not set")
+    key = (
+        os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        or os.getenv("SUPABASE_SERVICE_KEY")
+        or os.getenv("SUPABASE_KEY")
+        or os.getenv("SUPABASE_ANON_KEY")
+    )
+
+    if not key:
+        print("⚠️ No Supabase key found in environment")
         return None
 
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
-
-
-# ----------------------------
-# BATCH HELPERS
-# ----------------------------
-
-def get_smartport_batches(limit: int = 20):
-    supabase = get_supabase()
-    if not supabase:
-        return []
-
-    resp = (
-        supabase.table("smartport_predictions")
-        .select("batch_id,created_at")
-        .order("created_at", desc=True)
-        .limit(limit)
-        .execute()
-    )
-
-    return resp.data or []
-
-
-def get_stockout_batches(limit: int = 20):
-    supabase = get_supabase()
-    if not supabase:
-        return []
-
-    resp = (
-        supabase.table("stockout_predictions")
-        .select("batch_id,created_at")
-        .order("created_at", desc=True)
-        .limit(limit)
-        .execute()
-    )
-
-    return resp.data or []
-
-
-def get_nasa_batches(limit: int = 20):
-    supabase = get_supabase()
-    if not supabase:
-        return []
-
-    resp = (
-        supabase.table("nasa_predictions")
-        .select("batch_id,created_at")
-        .order("created_at", desc=True)
-        .limit(limit)
-        .execute()
-    )
-
-    return resp.data or []
+    try:
+        return create_client(SUPABASE_URL, key)
+    except Exception as e:
+        print(f"❌ Failed to initialize Supabase client: {e}")
+        return None
