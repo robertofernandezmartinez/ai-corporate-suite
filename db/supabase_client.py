@@ -1,18 +1,3 @@
-# =========================
-# Supabase Client (Shared)
-# =========================
-# This helper centralizes how we initialize the Supabase client across the suite.
-#
-# It supports multiple environment variable names for compatibility:
-# - SUPABASE_URL (required)
-# - SUPABASE_KEY (recommended if you already use it)
-# - SUPABASE_SERVICE_ROLE_KEY (recommended in FastAPI backend)
-# - SUPABASE_ANON_KEY (recommended in Streamlit / client apps)
-#
-# If variables are missing, it logs a clear error and returns None by default,
-# so the app can still start and show an informative message.
-# You can enforce strict behavior by setting SUPABASE_STRICT=1.
-
 import os
 from supabase import create_client, Client
 
@@ -21,19 +6,19 @@ SUPABASE_URL = "https://tqxbxyyrnvpjhbizopsg.supabase.co"
 
 def get_supabase() -> Client | None:
     """
-    Return a Supabase client using any supported environment variable name.
+    Return a Supabase client for the Streamlit UI.
 
-    Supported names:
-    - SUPABASE_SERVICE_ROLE_KEY
-    - SUPABASE_SERVICE_KEY
-    - SUPABASE_KEY
-    - SUPABASE_ANON_KEY
+    Priority:
+    1) SUPABASE_ANON_KEY
+    2) SUPABASE_KEY
+    3) SUPABASE_SERVICE_ROLE_KEY
+    4) SUPABASE_SERVICE_KEY
     """
     key = (
-        os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        or os.getenv("SUPABASE_SERVICE_KEY")
+        os.getenv("SUPABASE_ANON_KEY")
         or os.getenv("SUPABASE_KEY")
-        or os.getenv("SUPABASE_ANON_KEY")
+        or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        or os.getenv("SUPABASE_SERVICE_KEY")
     )
 
     if not key:
