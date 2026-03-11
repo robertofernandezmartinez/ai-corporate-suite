@@ -33,57 +33,80 @@ __main__.StockoutFeatureEngineer = StockoutFeatureEngineer
 # ============================================================
 # Helpers
 # ============================================================
-DATETIME_CANDIDATES = [
-    "date",
-    "Date",
-    "order_date",
-    "Order Date",
-    "sales_date",
-    "Sales Date",
-    "timestamp",
-    "Timestamp",
+REQUIRED_FEATURES = [
+    "product_id",
+    "holiday_promo",
+    "competitor_pricing",
+    "price",
+    "store_id",
+    "day_of_week",
+    "discount",
+    "inventory_level",
+    "units_sold",
+    "category",
+    "month",
+    "seasonality",
+    "weather",
+    "region",
+    "is_weekend",
 ]
 
 
-def _coerce_stockout_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+def _normalize_stockout_input(df: pd.DataFrame):
     """
-    Make the Stockout raw dataframe safe for numeric sklearn imputers.
-
-    Why:
-    - The trained pipeline includes SimpleImputer(strategy='median'), which requires numeric input.
-    - If date columns arrive as strings (e.g. '2022-01-01'), sklearn will crash.
-
-    What we do:
-    1) Convert known datetime-like columns to epoch seconds.
-    2) For any remaining object columns, attempt datetime parsing first.
-    3) If not datetime, attempt numeric coercion.
-    4) Keep identifiers needed later for the output dataframe from the original raw input.
+    Normalize the uploaded Stockout CSV into the schema expected by the trained model.
     """
     df = df.copy()
 
-    # 1) Convert known datetime columns to epoch seconds
-    for col in DATETIME_CANDIDATES:
-        if col in df.columns:
-            parsed = pd.to_datetime(df[col], errors="coerce")
-            df[col] = (parsed.astype("int64") / 1e9).where(parsed.notna(), np.nan).astype("float64")
+    rename_map = {
+        "Date": "date",
+        "Store ID": "store_id",
+        "Product ID": "product_id",
+        "Category": "category",
+        "Region": "region",
+        "Inventory Level": "inventory_level",
+        "Units Sold": "units_sold",
+        "Price": "price",
+        "Discount": "discount",
+        "Weather Condition": "weather",
+        "Holiday/Promotion": "holiday_promo",
+        "Competitor Pricing": "competitor_pricing",
+        "Seasonality": "seasonality",
+    }
 
-    # 2) Convert remaining object columns
-    obj_cols = df.select_dtypes(include=["object", "string"]).columns.tolist()
+    df = df.rename(columns=rename_map)
 
-    for col in obj_cols:
-        # First try datetime
-        parsed_dt = pd.to_datetime(df[col], errors="coerce")
-        if parsed_dt.notna().mean() > 0.7:
-            df[col] = (parsed_dt.astype("int64") / 1e9).where(parsed_dt.notna(), np.nan).astype("float64")
-            continue
+    if "date" in df.columns:
+        parsed = pd.to_datetime(df["date"], errors="coerce")
+        df["day_of_week"] = parsed.dt.dayofweek
+        df["month"] = parsed.dt.month
+        df["is_weekend"] = parsed.dt.dayofweek.isin([5, 6]).astype(int)
+    else:
+        df["day_of_week"] = np.nan
+        df["month"] = np.nan
+        df["is_weekend"] = np.nan
 
-        # Then try numeric
-        df[col] = pd.to_numeric(df[col], errors="coerce")
+    missing = [c for c in REQUIRED_FEATURES if c not in df.columns]
+    if missing:
+        raise ValueError(f"columns are missing: {set(missing)}")
 
-    # Clean infinities
-    df = df.replace([np.inf, -np.inf], np.nan)
+    model_df = df[REQUIRED_FEATURES].copy()
 
-    return df
+    numeric_cols = [
+        "competitor_pricing",
+        "price",
+        "day_of_week",
+        "discount",
+        "inventory_level",
+        "units_sold",
+        "month",
+        "is_weekend",
+    ]
+
+    for col in numeric_cols:
+        model_df[col] = pd.to_numeric(model_df[col], errors="coerce")
+
+    return model_df, df
 
 
 # ============================================================
@@ -130,34 +153,21 @@ class StockoutPredictor:
         try:
             df_raw = pd.read_csv(file.file, low_memory=False)
 
-            # Keep original raw dataframe for output fields like product_id and impact inputs
-            df_safe = _coerce_stockout_dataframe(df_raw)
+            df_model, df_norm = _normalize_stockout_input(df_raw)
 
-            probabilities = self.pipeline.predict_proba(df_safe)[:, 1].astype(float)
+            probabilities = self.pipeline.predict_proba(df_model)[:, 1].astype(float)
 
-            # Lightweight impact proxy (you can refine later)
-            price = pd.to_numeric(
-                df_raw.get("Price", df_raw.get("price", 0)),
-                errors="coerce"
-            ).fillna(0).astype(float)
-
-            velocity = pd.to_numeric(
-                df_raw.get("Units Sold", df_raw.get("units_sold", 0)),
-                errors="coerce"
-            ).fillna(0).astype(float)
-
+            price = pd.to_numeric(df_norm.get("price", 0), errors="coerce").fillna(0).astype(float)
+            velocity = pd.to_numeric(df_norm.get("units_sold", 0), errors="coerce").fillna(0).astype(float)
             financial_impact = (probabilities * price * velocity).astype(float)
 
             batch_id = str(uuid.uuid4())
             now_ts = datetime.now(timezone.utc).isoformat()
 
-            product_id = df_raw.get(
-                "Product ID",
-                df_raw.get("product_id", "Unknown")
-            ).astype(str)
+            product_id = df_norm.get("product_id", pd.Series(["Unknown"] * len(df_norm))).astype(str)
 
             results_df = pd.DataFrame({
-                "prediction_id": [str(uuid.uuid4()) for _ in range(len(df_raw))],
+                "prediction_id": [str(uuid.uuid4()) for _ in range(len(df_norm))],
                 "batch_id": batch_id,
                 "created_at": now_ts,
                 "product_id": product_id,
@@ -172,7 +182,7 @@ class StockoutPredictor:
 
             return {
                 "success": True,
-                "processed_records": int(len(df_raw)),
+                "processed_records": int(len(df_norm)),
                 "total_exposure": float(np.nan_to_num(results_df["financial_impact"]).sum()),
                 "distribution": results_df["risk_level"].value_counts().to_dict(),
                 "batch_id": batch_id
