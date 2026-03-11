@@ -53,6 +53,16 @@ NUMERIC_COLS = [
     "is_weekend",
 ]
 
+CATEGORICAL_COLS = [
+    "product_id",
+    "holiday_promo",
+    "store_id",
+    "category",
+    "seasonality",
+    "weather",
+    "region",
+]
+
 
 def _canonicalize(col: str) -> str:
     col = str(col).strip().lower()
@@ -96,52 +106,83 @@ def _safe_to_datetime(series: pd.Series) -> pd.Series:
 
 
 def _clean_numeric(series: pd.Series) -> pd.Series:
-    return pd.to_numeric(
-        series.astype(str)
-        .str.replace("%", "", regex=False)
-        .str.replace(",", "", regex=False)
-        .str.strip()
-        .replace({"": np.nan, "nan": np.nan, "None": np.nan, "null": np.nan}),
-        errors="coerce",
-    )
+    if series is None:
+        return pd.Series(dtype="float64")
 
+    s = series.copy()
 
-def _normalize_yes_no_like(series: pd.Series) -> pd.Series:
-    s = series.astype(str).str.strip().str.lower()
-    mapping = {
-        "1": 1,
-        "0": 0,
-        "true": 1,
-        "false": 0,
-        "yes": 1,
-        "no": 0,
-        "y": 1,
-        "n": 0,
-        "holiday": 1,
-        "no holiday": 0,
-        "promo": 1,
-        "promotion": 1,
+    s = s.astype(str)
+    s = s.str.strip()
+    s = s.str.replace("%", "", regex=False)
+    s = s.str.replace(",", "", regex=False)
+
+    replacements = {
+        "": np.nan,
+        "nan": np.nan,
+        "none": np.nan,
+        "null": np.nan,
+        "na": np.nan,
+        "n/a": np.nan,
+        "missing": np.nan,
     }
-    mapped = s.map(mapping)
-    return mapped.where(mapped.notna(), series)
+    s = s.str.lower().replace(replacements)
+
+    s = pd.to_numeric(s, errors="coerce")
+    s = s.astype("float64")
+
+    return s
 
 
-def _prepare_model_input(df: pd.DataFrame):
-    df = _normalize_headers(df)
+def _clean_categorical(series: pd.Series) -> pd.Series:
+    if series is None:
+        return pd.Series(dtype="object")
+
+    s = series.copy()
+    s = s.replace({pd.NA: np.nan})
+    s = s.astype("object")
+    s = s.where(pd.notna(s), "Unknown")
+    s = s.astype(str).str.strip()
+    s = s.replace({"": "Unknown", "nan": "Unknown", "None": "Unknown", "null": "Unknown"})
+    return s
+
+
+def _normalize_holiday_promo(series: pd.Series) -> pd.Series:
+    s = _clean_categorical(series).str.lower()
+
+    mapping = {
+        "1": "1",
+        "0": "0",
+        "true": "1",
+        "false": "0",
+        "yes": "1",
+        "no": "0",
+        "y": "1",
+        "n": "0",
+        "holiday": "1",
+        "no holiday": "0",
+        "promo": "1",
+        "promotion": "1",
+        "holiday/promotion": "1",
+        "none": "0",
+        "unknown": "Unknown",
+    }
+
+    return s.map(lambda x: mapping.get(x, x)).astype(str)
+
+
+def _prepare_model_input(df_raw: pd.DataFrame):
+    df = _normalize_headers(df_raw)
     df = _rename_columns(df)
 
     if "date" in df.columns:
         parsed = _safe_to_datetime(df["date"])
-        df["day_of_week"] = parsed.dt.dayofweek
-        df["month"] = parsed.dt.month
-        df["is_weekend"] = parsed.dt.dayofweek.isin([5, 6]).astype(int)
+        df["day_of_week"] = parsed.dt.dayofweek.astype("float64")
+        df["month"] = parsed.dt.month.astype("float64")
+        df["is_weekend"] = parsed.dt.dayofweek.isin([5, 6]).astype("float64")
     else:
-        df["day_of_week"] = np.nan
-        df["month"] = np.nan
-        df["is_weekend"] = np.nan
-
-    if "holiday_promo" in df.columns:
-        df["holiday_promo"] = _normalize_yes_no_like(df["holiday_promo"])
+        df["day_of_week"] = pd.Series(np.nan, index=df.index, dtype="float64")
+        df["month"] = pd.Series(np.nan, index=df.index, dtype="float64")
+        df["is_weekend"] = pd.Series(np.nan, index=df.index, dtype="float64")
 
     missing = [c for c in REQUIRED_FEATURES if c not in df.columns]
     if missing:
@@ -152,9 +193,19 @@ def _prepare_model_input(df: pd.DataFrame):
     for col in NUMERIC_COLS:
         model_df[col] = _clean_numeric(model_df[col])
 
-    categorical_cols = [c for c in REQUIRED_FEATURES if c not in NUMERIC_COLS]
-    for col in categorical_cols:
-        model_df[col] = model_df[col].astype(str).fillna("Unknown")
+    for col in CATEGORICAL_COLS:
+        model_df[col] = _clean_categorical(model_df[col])
+
+    model_df["holiday_promo"] = _normalize_holiday_promo(model_df["holiday_promo"])
+
+    model_df = model_df.replace({pd.NA: np.nan})
+    model_df = model_df.loc[:, REQUIRED_FEATURES]
+
+    for col in NUMERIC_COLS:
+        model_df[col] = model_df[col].astype("float64")
+
+    for col in CATEGORICAL_COLS:
+        model_df[col] = model_df[col].astype("object")
 
     return model_df, df
 
@@ -203,23 +254,26 @@ class StockoutPredictor:
 
             probabilities = self.pipeline.predict_proba(df_model)[:, 1].astype(float)
 
-            price = _clean_numeric(df_norm.get("price", pd.Series([0] * len(df_norm)))).fillna(0.0)
-            units_sold = _clean_numeric(df_norm.get("units_sold", pd.Series([0] * len(df_norm)))).fillna(0.0)
+            price = _clean_numeric(df_norm["price"]) if "price" in df_norm.columns else pd.Series(0.0, index=df_norm.index)
+            units_sold = _clean_numeric(df_norm["units_sold"]) if "units_sold" in df_norm.columns else pd.Series(0.0, index=df_norm.index)
+            price = price.fillna(0.0).astype("float64")
+            units_sold = units_sold.fillna(0.0).astype("float64")
+
             financial_impact = (probabilities * price * units_sold).astype(float)
 
             batch_id = str(uuid.uuid4())
             now_ts = datetime.now(timezone.utc).isoformat()
 
-            product_id = df_norm.get(
-                "product_id",
-                pd.Series(["Unknown"] * len(df_norm), index=df_norm.index)
-            ).astype(str)
+            if "product_id" in df_norm.columns:
+                product_id = _clean_categorical(df_norm["product_id"])
+            else:
+                product_id = pd.Series(["Unknown"] * len(df_norm), index=df_norm.index, dtype="object")
 
             results_df = pd.DataFrame({
                 "prediction_id": [str(uuid.uuid4()) for _ in range(len(df_norm))],
                 "batch_id": batch_id,
                 "created_at": now_ts,
-                "product_id": product_id,
+                "product_id": product_id.astype(str),
                 "risk_score": probabilities,
                 "risk_level": [self._risk_level(p) for p in probabilities],
                 "financial_impact": financial_impact,
