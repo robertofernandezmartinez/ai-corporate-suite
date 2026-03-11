@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
-# Feature Engineering Class (Mandatory for Joblib Loading) 
+# Feature Engineering Class (Mandatory for Joblib Loading)
 # ============================================================
 class StockoutFeatureEngineer(BaseEstimator, TransformerMixin):
     """
@@ -28,6 +28,62 @@ class StockoutFeatureEngineer(BaseEstimator, TransformerMixin):
 
 
 __main__.StockoutFeatureEngineer = StockoutFeatureEngineer
+
+
+# ============================================================
+# Helpers
+# ============================================================
+DATETIME_CANDIDATES = [
+    "date",
+    "Date",
+    "order_date",
+    "Order Date",
+    "sales_date",
+    "Sales Date",
+    "timestamp",
+    "Timestamp",
+]
+
+
+def _coerce_stockout_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Make the Stockout raw dataframe safe for numeric sklearn imputers.
+
+    Why:
+    - The trained pipeline includes SimpleImputer(strategy='median'), which requires numeric input.
+    - If date columns arrive as strings (e.g. '2022-01-01'), sklearn will crash.
+
+    What we do:
+    1) Convert known datetime-like columns to epoch seconds.
+    2) For any remaining object columns, attempt datetime parsing first.
+    3) If not datetime, attempt numeric coercion.
+    4) Keep identifiers needed later for the output dataframe from the original raw input.
+    """
+    df = df.copy()
+
+    # 1) Convert known datetime columns to epoch seconds
+    for col in DATETIME_CANDIDATES:
+        if col in df.columns:
+            parsed = pd.to_datetime(df[col], errors="coerce")
+            df[col] = (parsed.astype("int64") / 1e9).where(parsed.notna(), np.nan).astype("float64")
+
+    # 2) Convert remaining object columns
+    obj_cols = df.select_dtypes(include=["object", "string"]).columns.tolist()
+
+    for col in obj_cols:
+        # First try datetime
+        parsed_dt = pd.to_datetime(df[col], errors="coerce")
+        if parsed_dt.notna().mean() > 0.7:
+            df[col] = (parsed_dt.astype("int64") / 1e9).where(parsed_dt.notna(), np.nan).astype("float64")
+            continue
+
+        # Then try numeric
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Clean infinities
+    df = df.replace([np.inf, -np.inf], np.nan)
+
+    return df
 
 
 # ============================================================
@@ -74,17 +130,31 @@ class StockoutPredictor:
         try:
             df_raw = pd.read_csv(file.file, low_memory=False)
 
-            probabilities = self.pipeline.predict_proba(df_raw)[:, 1].astype(float)
+            # Keep original raw dataframe for output fields like product_id and impact inputs
+            df_safe = _coerce_stockout_dataframe(df_raw)
+
+            probabilities = self.pipeline.predict_proba(df_safe)[:, 1].astype(float)
 
             # Lightweight impact proxy (you can refine later)
-            price = pd.to_numeric(df_raw.get("Price", df_raw.get("price", 0)), errors="coerce").fillna(0).astype(float)
-            velocity = pd.to_numeric(df_raw.get("Units Sold", df_raw.get("units_sold", 0)), errors="coerce").fillna(0).astype(float)
+            price = pd.to_numeric(
+                df_raw.get("Price", df_raw.get("price", 0)),
+                errors="coerce"
+            ).fillna(0).astype(float)
+
+            velocity = pd.to_numeric(
+                df_raw.get("Units Sold", df_raw.get("units_sold", 0)),
+                errors="coerce"
+            ).fillna(0).astype(float)
+
             financial_impact = (probabilities * price * velocity).astype(float)
 
             batch_id = str(uuid.uuid4())
             now_ts = datetime.now(timezone.utc).isoformat()
 
-            product_id = df_raw.get("Product ID", df_raw.get("product_id", "Unknown")).astype(str)
+            product_id = df_raw.get(
+                "Product ID",
+                df_raw.get("product_id", "Unknown")
+            ).astype(str)
 
             results_df = pd.DataFrame({
                 "prediction_id": [str(uuid.uuid4()) for _ in range(len(df_raw))],
