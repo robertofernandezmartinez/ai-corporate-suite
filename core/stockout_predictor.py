@@ -4,7 +4,6 @@ import joblib
 import uuid
 import logging
 import traceback
-import re
 from pathlib import Path
 from datetime import datetime, timezone
 from sklearn.base import BaseEstimator, TransformerMixin
@@ -14,200 +13,72 @@ logger = logging.getLogger(__name__)
 
 
 class StockoutFeatureEngineer(BaseEstimator, TransformerMixin):
+    def __init__(self):
+        self.cat_cols = [
+            "store_id",
+            "category",
+            "region",
+            "weather",
+            "holiday_promo",
+            "seasonality",
+            "month",
+            "day_of_week",
+            "product_id",
+        ]
+        self.num_cols = [
+            "inventory_level",
+            "units_sold",
+            "price",
+            "discount",
+            "competitor_pricing",
+            "is_weekend",
+        ]
+
     def fit(self, X, y=None):
         return self
 
     def transform(self, X):
-        return X
+        df = X.copy()
+
+        mapping = {
+            "Date": "date",
+            "Store ID": "store_id",
+            "Product ID": "product_id",
+            "Category": "category",
+            "Region": "region",
+            "Inventory Level": "inventory_level",
+            "Units Sold": "units_sold",
+            "Units Ordered": "units_ordered",
+            "Price": "price",
+            "Discount": "discount",
+            "Weather Condition": "weather",
+            "Holiday/Promotion": "holiday_promo",
+            "Competitor Pricing": "competitor_pricing",
+            "Seasonality": "seasonality",
+        }
+
+        df = df.rename(columns=mapping)
+
+        if "date" in df.columns:
+            date_dt = pd.to_datetime(df["date"], errors="coerce", dayfirst=True)
+            df["month"] = date_dt.dt.month.astype(str)
+            df["day_of_week"] = date_dt.dt.dayofweek.astype(str)
+            df["is_weekend"] = date_dt.dt.dayofweek.isin([5, 6]).astype(float)
+
+        for col in self.cat_cols:
+            if col not in df.columns:
+                df[col] = "Unknown"
+            df[col] = df[col].astype(str)
+
+        for col in self.num_cols:
+            if col not in df.columns:
+                df[col] = 0.0
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+
+        return df[self.cat_cols + self.num_cols]
 
 
 __main__.StockoutFeatureEngineer = StockoutFeatureEngineer
-
-
-REQUIRED_FEATURES = [
-    "product_id",
-    "holiday_promo",
-    "competitor_pricing",
-    "price",
-    "store_id",
-    "day_of_week",
-    "discount",
-    "inventory_level",
-    "units_sold",
-    "category",
-    "month",
-    "seasonality",
-    "weather",
-    "region",
-    "is_weekend",
-]
-
-NUMERIC_COLS = [
-    "competitor_pricing",
-    "price",
-    "day_of_week",
-    "discount",
-    "inventory_level",
-    "units_sold",
-    "month",
-    "is_weekend",
-]
-
-CATEGORICAL_COLS = [
-    "product_id",
-    "holiday_promo",
-    "store_id",
-    "category",
-    "seasonality",
-    "weather",
-    "region",
-]
-
-
-def _canonicalize(col: str) -> str:
-    col = str(col).strip().lower()
-    col = re.sub(r"[^a-z0-9]+", "_", col)
-    col = re.sub(r"_+", "_", col).strip("_")
-    return col
-
-
-def _normalize_headers(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df.columns = [_canonicalize(c) for c in df.columns]
-    return df
-
-
-def _rename_columns(df: pd.DataFrame) -> pd.DataFrame:
-    alias_map = {
-        "date": "date",
-        "store_id": "store_id",
-        "product_id": "product_id",
-        "category": "category",
-        "region": "region",
-        "inventory_level": "inventory_level",
-        "units_sold": "units_sold",
-        "price": "price",
-        "discount": "discount",
-        "weather_condition": "weather",
-        "weather": "weather",
-        "holiday_promotion": "holiday_promo",
-        "holiday_promo": "holiday_promo",
-        "competitor_pricing": "competitor_pricing",
-        "seasonality": "seasonality",
-    }
-    return df.rename(columns=alias_map)
-
-
-def _safe_to_datetime(series: pd.Series) -> pd.Series:
-    parsed = pd.to_datetime(series, errors="coerce")
-    if parsed.notna().sum() == 0:
-        parsed = pd.to_datetime(series, errors="coerce", dayfirst=True)
-    return parsed
-
-
-def _clean_numeric(series: pd.Series) -> pd.Series:
-    if series is None:
-        return pd.Series(dtype="float64")
-
-    s = series.copy()
-
-    s = s.astype(str)
-    s = s.str.strip()
-    s = s.str.replace("%", "", regex=False)
-    s = s.str.replace(",", "", regex=False)
-
-    replacements = {
-        "": np.nan,
-        "nan": np.nan,
-        "none": np.nan,
-        "null": np.nan,
-        "na": np.nan,
-        "n/a": np.nan,
-        "missing": np.nan,
-    }
-    s = s.str.lower().replace(replacements)
-
-    s = pd.to_numeric(s, errors="coerce")
-    s = s.astype("float64")
-
-    return s
-
-
-def _clean_categorical(series: pd.Series) -> pd.Series:
-    if series is None:
-        return pd.Series(dtype="object")
-
-    s = series.copy()
-    s = s.replace({pd.NA: np.nan})
-    s = s.astype("object")
-    s = s.where(pd.notna(s), "Unknown")
-    s = s.astype(str).str.strip()
-    s = s.replace({"": "Unknown", "nan": "Unknown", "None": "Unknown", "null": "Unknown"})
-    return s
-
-
-def _normalize_holiday_promo(series: pd.Series) -> pd.Series:
-    s = _clean_categorical(series).str.lower()
-
-    mapping = {
-        "1": "1",
-        "0": "0",
-        "true": "1",
-        "false": "0",
-        "yes": "1",
-        "no": "0",
-        "y": "1",
-        "n": "0",
-        "holiday": "1",
-        "no holiday": "0",
-        "promo": "1",
-        "promotion": "1",
-        "holiday/promotion": "1",
-        "none": "0",
-        "unknown": "Unknown",
-    }
-
-    return s.map(lambda x: mapping.get(x, x)).astype(str)
-
-
-def _prepare_model_input(df_raw: pd.DataFrame):
-    df = _normalize_headers(df_raw)
-    df = _rename_columns(df)
-
-    if "date" in df.columns:
-        parsed = _safe_to_datetime(df["date"])
-        df["day_of_week"] = parsed.dt.dayofweek.astype("float64")
-        df["month"] = parsed.dt.month.astype("float64")
-        df["is_weekend"] = parsed.dt.dayofweek.isin([5, 6]).astype("float64")
-    else:
-        df["day_of_week"] = pd.Series(np.nan, index=df.index, dtype="float64")
-        df["month"] = pd.Series(np.nan, index=df.index, dtype="float64")
-        df["is_weekend"] = pd.Series(np.nan, index=df.index, dtype="float64")
-
-    missing = [c for c in REQUIRED_FEATURES if c not in df.columns]
-    if missing:
-        raise ValueError(f"columns are missing: {set(missing)}")
-
-    model_df = df[REQUIRED_FEATURES].copy()
-
-    for col in NUMERIC_COLS:
-        model_df[col] = _clean_numeric(model_df[col])
-
-    for col in CATEGORICAL_COLS:
-        model_df[col] = _clean_categorical(model_df[col])
-
-    model_df["holiday_promo"] = _normalize_holiday_promo(model_df["holiday_promo"])
-
-    model_df = model_df.replace({pd.NA: np.nan})
-    model_df = model_df.loc[:, REQUIRED_FEATURES]
-
-    for col in NUMERIC_COLS:
-        model_df[col] = model_df[col].astype("float64")
-
-    for col in CATEGORICAL_COLS:
-        model_df[col] = model_df[col].astype("object")
-
-    return model_df, df
 
 
 class StockoutPredictor:
@@ -250,30 +121,26 @@ class StockoutPredictor:
 
         try:
             df_raw = pd.read_csv(file.file, low_memory=False)
-            df_model, df_norm = _prepare_model_input(df_raw)
 
-            probabilities = self.pipeline.predict_proba(df_model)[:, 1].astype(float)
+            probabilities = self.pipeline.predict_proba(df_raw)[:, 1].astype(float)
 
-            price = _clean_numeric(df_norm["price"]) if "price" in df_norm.columns else pd.Series(0.0, index=df_norm.index)
-            units_sold = _clean_numeric(df_norm["units_sold"]) if "units_sold" in df_norm.columns else pd.Series(0.0, index=df_norm.index)
-            price = price.fillna(0.0).astype("float64")
-            units_sold = units_sold.fillna(0.0).astype("float64")
-
+            price = pd.to_numeric(df_raw.get("Price", 0), errors="coerce").fillna(0.0).astype(float)
+            units_sold = pd.to_numeric(df_raw.get("Units Sold", 0), errors="coerce").fillna(0.0).astype(float)
             financial_impact = (probabilities * price * units_sold).astype(float)
 
             batch_id = str(uuid.uuid4())
             now_ts = datetime.now(timezone.utc).isoformat()
 
-            if "product_id" in df_norm.columns:
-                product_id = _clean_categorical(df_norm["product_id"])
-            else:
-                product_id = pd.Series(["Unknown"] * len(df_norm), index=df_norm.index, dtype="object")
+            product_id = df_raw.get(
+                "Product ID",
+                pd.Series(["Unknown"] * len(df_raw), index=df_raw.index)
+            ).astype(str)
 
             results_df = pd.DataFrame({
-                "prediction_id": [str(uuid.uuid4()) for _ in range(len(df_norm))],
+                "prediction_id": [str(uuid.uuid4()) for _ in range(len(df_raw))],
                 "batch_id": batch_id,
                 "created_at": now_ts,
-                "product_id": product_id.astype(str),
+                "product_id": product_id,
                 "risk_score": probabilities,
                 "risk_level": [self._risk_level(p) for p in probabilities],
                 "financial_impact": financial_impact,
