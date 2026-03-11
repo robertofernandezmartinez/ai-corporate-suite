@@ -12,15 +12,7 @@ import __main__
 logger = logging.getLogger(__name__)
 
 
-# ============================================================
-# Feature Engineering Class (Required for Joblib)
-# ============================================================
-
 class StockoutFeatureEngineer(BaseEstimator, TransformerMixin):
-    """
-    Required so sklearn pipeline can unpickle the transformer.
-    Actual transform logic lives inside the saved pipeline.
-    """
     def fit(self, X, y=None):
         return self
 
@@ -30,10 +22,6 @@ class StockoutFeatureEngineer(BaseEstimator, TransformerMixin):
 
 __main__.StockoutFeatureEngineer = StockoutFeatureEngineer
 
-
-# ============================================================
-# Expected Feature Schema
-# ============================================================
 
 REQUIRED_FEATURES = [
     "product_id",
@@ -66,14 +54,7 @@ NUMERIC_COLS = [
 ]
 
 
-# ============================================================
-# Column Normalization
-# ============================================================
-
 def _normalize_headers(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Normalize incoming CSV column names to stable format.
-    """
     df.columns = (
         df.columns
         .str.strip()
@@ -85,9 +66,6 @@ def _normalize_headers(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _rename_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Map normalized CSV headers to model schema.
-    """
 
     rename_map = {
         "date": "date",
@@ -105,19 +83,12 @@ def _rename_columns(df: pd.DataFrame) -> pd.DataFrame:
         "seasonality": "seasonality",
     }
 
-    df = df.rename(columns=rename_map)
+    return df.rename(columns=rename_map)
 
-    return df
-
-
-# ============================================================
-# Feature Engineering
-# ============================================================
 
 def _generate_time_features(df: pd.DataFrame) -> pd.DataFrame:
 
     if "date" not in df.columns:
-        logger.warning("⚠️ No date column detected. Derived features will be NaN.")
         df["day_of_week"] = np.nan
         df["month"] = np.nan
         df["is_weekend"] = np.nan
@@ -127,32 +98,29 @@ def _generate_time_features(df: pd.DataFrame) -> pd.DataFrame:
 
     df["day_of_week"] = parsed.dt.dayofweek
     df["month"] = parsed.dt.month
-    df["is_weekend"] = parsed.dt.dayofweek.isin([5, 6]).astype(float)
-
-    logger.info(
-        "📅 Date parsing: %s/%s valid rows",
-        parsed.notna().sum(),
-        len(parsed)
-    )
+    df["is_weekend"] = parsed.dt.dayofweek.isin([5, 6]).astype(int)
 
     return df
 
 
-# ============================================================
-# Full Normalization Pipeline
-# ============================================================
+def _clean_numeric(series):
+    return (
+        series.astype(str)
+        .str.replace("%", "", regex=False)
+        .str.replace(",", "", regex=False)
+        .str.strip()
+        .replace(["", "nan", "None"], np.nan)
+        .astype(float)
+    )
+
 
 def _normalize_stockout_input(df: pd.DataFrame):
 
     df = df.copy()
 
-    logger.info("📦 Raw input columns: %s", list(df.columns))
-
     df = _normalize_headers(df)
     df = _rename_columns(df)
     df = _generate_time_features(df)
-
-    logger.info("🔁 Normalized columns: %s", list(df.columns))
 
     missing = [c for c in REQUIRED_FEATURES if c not in df.columns]
 
@@ -162,16 +130,10 @@ def _normalize_stockout_input(df: pd.DataFrame):
     model_df = df[REQUIRED_FEATURES].copy()
 
     for col in NUMERIC_COLS:
-        model_df[col] = pd.to_numeric(model_df[col], errors="coerce")
-
-    logger.info("🧠 Model input shape: %s", model_df.shape)
+        model_df[col] = _clean_numeric(model_df[col])
 
     return model_df, df
 
-
-# ============================================================
-# Predictor
-# ============================================================
 
 class StockoutPredictor:
 
@@ -196,12 +158,14 @@ class StockoutPredictor:
 
             if self.model_path.exists():
                 self.pipeline = joblib.load(self.model_path)
-                logger.info("✅ Stockout Engine: Pipeline loaded.")
+                logger.info("Stockout Engine Loaded")
+
             else:
-                logger.warning("⚠️ Stockout model not found at %s", self.model_path)
+                logger.warning(f"Model not found at {self.model_path}")
 
         except Exception as e:
-            logger.error("❌ Model load error: %s", e)
+
+            logger.error(f"Model Load Error: {e}")
             self.pipeline = None
 
 
@@ -209,10 +173,13 @@ class StockoutPredictor:
 
         if p >= 0.80:
             return "CRITICAL"
+
         if p >= 0.50:
             return "HIGH"
+
         if p >= 0.20:
             return "MEDIUM"
+
         return "LOW"
 
 
@@ -223,15 +190,9 @@ class StockoutPredictor:
 
         try:
 
-            logger.info("📥 Processing Stockout: %s", getattr(file, "filename", "uploaded.csv"))
-
             df_raw = pd.read_csv(file.file, low_memory=False)
 
-            logger.info("📄 Input shape: %s", df_raw.shape)
-
             df_model, df_norm = _normalize_stockout_input(df_raw)
-
-            logger.info("🚀 Running pipeline inference")
 
             probabilities = self.pipeline.predict_proba(df_model)[:, 1].astype(float)
 
@@ -241,6 +202,7 @@ class StockoutPredictor:
             financial_impact = (probabilities * price * velocity).astype(float)
 
             batch_id = str(uuid.uuid4())
+
             now_ts = datetime.now(timezone.utc).isoformat()
 
             product_id = df_norm.get(
@@ -270,11 +232,6 @@ class StockoutPredictor:
             if self.supabase:
                 self._persist_batches(results_df, "stockout_predictions")
 
-            logger.info(
-                "✅ Stockout Success: %s rows processed",
-                len(results_df)
-            )
-
             return {
 
                 "success": True,
@@ -290,7 +247,7 @@ class StockoutPredictor:
 
         except Exception as e:
 
-            logger.error("❌ Stockout Runtime Error:\n%s", traceback.format_exc())
+            logger.error(traceback.format_exc())
 
             return {"success": False, "detail": str(e)}
 
@@ -307,11 +264,8 @@ class StockoutPredictor:
                     records[i:i + batch_size]
                 ).execute()
 
-            logger.info(
-                "✅ Stockout Persistence: inserted %s rows",
-                len(records)
-            )
+            logger.info(f"Inserted {len(records)} rows into {table_name}")
 
         except Exception as e:
 
-            logger.warning("⚠️ Supabase insert warning: %s", e)
+            logger.warning(f"Supabase insert warning: {e}")
