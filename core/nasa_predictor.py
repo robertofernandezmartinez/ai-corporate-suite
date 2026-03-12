@@ -176,7 +176,8 @@ class NASAPredictor:
                 if col not in df_raw.columns:
                     return {"success": False, "detail": f"Missing required column: {col}"}
 
-            X = df_raw.drop(columns=["unit_id", "time_in_cycles"], errors="ignore")
+            # Keep time_in_cycles because the trained pipeline expects it.
+            X = df_raw.drop(columns=["unit_id"], errors="ignore")
 
             predicted_rul = self.pipeline.predict(X).astype(float)
 
