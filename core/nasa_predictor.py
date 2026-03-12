@@ -12,9 +12,6 @@ import __main__
 logger = logging.getLogger(__name__)
 
 
-# ============================================================
-# Feature Engineering Class (Mandatory for Joblib Loading) 
-# ============================================================ 
 class NASAFeatureEngineer(BaseEstimator, TransformerMixin):
     """
     This class must exist for joblib to unpickle the trained pipeline.
@@ -26,20 +23,119 @@ class NASAFeatureEngineer(BaseEstimator, TransformerMixin):
 
     def transform(self, X):
         df = X.copy()
-
-        # Convert everything to numeric; unknown becomes NaN then filled to 0.
         df = df.apply(pd.to_numeric, errors="coerce").fillna(0)
-
         return df.values.astype(np.float64)
 
 
-# Register class for joblib
 __main__.NASAFeatureEngineer = NASAFeatureEngineer
 
 
-# ============================================================
-# Predictor
-# ============================================================
+NASA_RAW_COLUMNS = [
+    "unit_id",
+    "cycle",
+    "op_setting_1",
+    "op_setting_2",
+    "op_setting_3",
+    "sensor_1",
+    "sensor_2",
+    "sensor_3",
+    "sensor_4",
+    "sensor_5",
+    "sensor_6",
+    "sensor_7",
+    "sensor_8",
+    "sensor_9",
+    "sensor_10",
+    "sensor_11",
+    "sensor_12",
+    "sensor_13",
+    "sensor_14",
+    "sensor_15",
+    "sensor_16",
+    "sensor_17",
+    "sensor_18",
+    "sensor_19",
+    "sensor_20",
+    "sensor_21",
+]
+
+
+def _load_nasa_dataframe(file) -> pd.DataFrame:
+    filename = getattr(file, "filename", "") or ""
+    file_ext = Path(filename).suffix.lower()
+
+    try:
+        file.file.seek(0)
+    except Exception:
+        pass
+
+    if file_ext == ".txt":
+        df = pd.read_csv(
+            file.file,
+            sep=r"\s+",
+            header=None,
+            engine="python"
+        )
+
+        df = df.dropna(axis=1, how="all")
+
+        if df.shape[1] == 1:
+            raise ValueError(
+                "This looks like a NASA RUL labels file, not a raw telemetry file. "
+                "Please upload train_FD001.txt or test_FD001.txt."
+            )
+
+        if df.shape[1] < len(NASA_RAW_COLUMNS):
+            raise ValueError(
+                f"Invalid NASA raw file: expected at least {len(NASA_RAW_COLUMNS)} columns, got {df.shape[1]}"
+            )
+
+        if df.shape[1] > len(NASA_RAW_COLUMNS):
+            df = df.iloc[:, :len(NASA_RAW_COLUMNS)]
+
+        df.columns = NASA_RAW_COLUMNS
+        return df
+
+    try:
+        file.file.seek(0)
+    except Exception:
+        pass
+
+    df = pd.read_csv(file.file, low_memory=False)
+
+    if {"unit_id", "cycle"}.issubset(df.columns):
+        return df
+
+    try:
+        file.file.seek(0)
+    except Exception:
+        pass
+
+    df_txt = pd.read_csv(
+        file.file,
+        sep=r"\s+",
+        header=None,
+        engine="python"
+    )
+
+    df_txt = df_txt.dropna(axis=1, how="all")
+
+    if df_txt.shape[1] == 1:
+        raise ValueError(
+            "This looks like a NASA RUL labels file, not a raw telemetry file. "
+            "Please upload train_FD001.txt or test_FD001.txt."
+        )
+
+    if df_txt.shape[1] >= len(NASA_RAW_COLUMNS):
+        df_txt = df_txt.iloc[:, :len(NASA_RAW_COLUMNS)]
+        df_txt.columns = NASA_RAW_COLUMNS
+        return df_txt
+
+    raise ValueError(
+        "Could not parse uploaded NASA file. Please upload train_FD001.txt or test_FD001.txt."
+    )
+
+
 class NASAPredictor:
     def __init__(self):
         try:
@@ -70,20 +166,16 @@ class NASAPredictor:
             return {"success": False, "detail": "NASA engine not initialized"}
 
         try:
-            df_raw = pd.read_csv(file.file, low_memory=False)
+            df_raw = _load_nasa_dataframe(file)
 
-            # Required columns for correct degradation plotting
             for col in ["unit_id", "cycle"]:
                 if col not in df_raw.columns:
                     return {"success": False, "detail": f"Missing required column: {col}"}
 
-            # Build features: drop identifiers
             X = df_raw.drop(columns=["unit_id", "cycle"], errors="ignore")
 
-            # Predict RUL
             predicted_rul = self.pipeline.predict(X).astype(float)
 
-            # New batch id per upload
             batch_id = str(uuid.uuid4())
             now_ts = datetime.now(timezone.utc).isoformat()
 
