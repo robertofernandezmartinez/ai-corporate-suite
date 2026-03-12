@@ -32,7 +32,7 @@ __main__.NASAFeatureEngineer = NASAFeatureEngineer
 
 NASA_RAW_COLUMNS = [
     "unit_id",
-    "cycle",
+    "time_in_cycles",
     "op_setting_1",
     "op_setting_2",
     "op_setting_3",
@@ -103,7 +103,11 @@ def _load_nasa_dataframe(file) -> pd.DataFrame:
 
     df = pd.read_csv(file.file, low_memory=False)
 
+    if {"unit_id", "time_in_cycles"}.issubset(df.columns):
+        return df
+
     if {"unit_id", "cycle"}.issubset(df.columns):
+        df = df.rename(columns={"cycle": "time_in_cycles"})
         return df
 
     try:
@@ -168,11 +172,11 @@ class NASAPredictor:
         try:
             df_raw = _load_nasa_dataframe(file)
 
-            for col in ["unit_id", "cycle"]:
+            for col in ["unit_id", "time_in_cycles"]:
                 if col not in df_raw.columns:
                     return {"success": False, "detail": f"Missing required column: {col}"}
 
-            X = df_raw.drop(columns=["unit_id", "cycle"], errors="ignore")
+            X = df_raw.drop(columns=["unit_id", "time_in_cycles"], errors="ignore")
 
             predicted_rul = self.pipeline.predict(X).astype(float)
 
@@ -184,7 +188,7 @@ class NASAPredictor:
                 "batch_id": batch_id,
                 "created_at": now_ts,
                 "unit_id": pd.to_numeric(df_raw["unit_id"], errors="coerce").fillna(0).astype(int),
-                "cycle": pd.to_numeric(df_raw["cycle"], errors="coerce").fillna(0).astype(int),
+                "time_in_cycles": pd.to_numeric(df_raw["time_in_cycles"], errors="coerce").fillna(0).astype(int),
                 "predicted_rul": predicted_rul,
                 "timestamp": now_ts,
             })
