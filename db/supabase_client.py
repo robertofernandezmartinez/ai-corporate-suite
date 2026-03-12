@@ -1,32 +1,54 @@
 import os
+import pandas as pd
 from supabase import create_client, Client
 
-SUPABASE_URL = "https://tqxbxyyrnvpjhbizopsg.supabase.co"
 
+def get_supabase() -> Client:
 
-def get_supabase() -> Client | None:
-    """
-    Return a Supabase client for the Streamlit UI.
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_KEY")
 
-    Priority:
-    1) SUPABASE_ANON_KEY
-    2) SUPABASE_KEY
-    3) SUPABASE_SERVICE_ROLE_KEY
-    4) SUPABASE_SERVICE_KEY
-    """
-    key = (
-        os.getenv("SUPABASE_ANON_KEY")
-        or os.getenv("SUPABASE_KEY")
-        or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        or os.getenv("SUPABASE_SERVICE_KEY")
-    )
+    if not url:
+        raise ValueError("SUPABASE_URL missing")
 
     if not key:
-        print("⚠️ No Supabase key found in environment")
-        return None
+        raise ValueError("SUPABASE_KEY missing")
+
+    return create_client(url, key)
+
+
+def _fetch_table(table_name: str):
 
     try:
-        return create_client(SUPABASE_URL, key)
-    except Exception as e:
-        print(f"❌ Failed to initialize Supabase client: {e}")
-        return None
+
+        supabase = get_supabase()
+
+        response = (
+            supabase
+            .table(table_name)
+            .select("*")
+            .order("created_at", desc=True)
+            .execute()
+        )
+
+        data = response.data if hasattr(response, "data") else []
+
+        if not data:
+            return pd.DataFrame()
+
+        return pd.DataFrame(data)
+
+    except Exception:
+        return pd.DataFrame()
+
+
+def get_smartport_batches():
+    return _fetch_table("smartport_predictions")
+
+
+def get_stockout_batches():
+    return _fetch_table("stockout_predictions")
+
+
+def get_nasa_batches():
+    return _fetch_table("nasa_predictions")
