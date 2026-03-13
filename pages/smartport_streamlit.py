@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-from db.supabase_client import get_smartport_batches
+from db.supabase_client import get_smartport_batches, delete_batch
 
 
 st.set_page_config(
@@ -58,11 +58,25 @@ if df.empty:
 
 available_batches = get_batch_list(df)
 
-selected_batch = st.selectbox(
-    "Select Batch",
-    available_batches,
-    index=0 if available_batches else None
-)
+top_left, top_right = st.columns([2, 1])
+
+with top_left:
+    selected_batch = st.selectbox(
+        "Select Batch",
+        available_batches,
+        index=0 if available_batches else None
+    )
+
+with top_right:
+    st.markdown("#### Batch Controls")
+    if selected_batch and st.button("Delete Selected Batch", use_container_width=True):
+        try:
+            delete_batch("smartport_predictions", selected_batch)
+            st.success(f"Deleted batch: {selected_batch}")
+            st.cache_data.clear()
+            st.rerun()
+        except Exception as e:
+            st.error(f"Delete failed: {e}")
 
 if not selected_batch:
     st.info("No batch available.")
@@ -99,11 +113,7 @@ left, right = st.columns([1.5, 1])
 
 with left:
     if {"vessel_id", "financial_impact", "risk_level"}.issubset(batch_df.columns):
-        top_df = (
-            batch_df
-            .sort_values("financial_impact", ascending=False)
-            .head(20)
-        )
+        top_df = batch_df.sort_values("financial_impact", ascending=False).head(20)
 
         fig = px.bar(
             top_df,
@@ -115,12 +125,7 @@ with left:
         st.plotly_chart(fig, use_container_width=True)
 
     elif {"financial_impact", "risk_level"}.issubset(batch_df.columns):
-        top_df = (
-            batch_df
-            .sort_values("financial_impact", ascending=False)
-            .head(20)
-            .reset_index(drop=True)
-        )
+        top_df = batch_df.sort_values("financial_impact", ascending=False).head(20).reset_index(drop=True)
         top_df["record"] = top_df.index.astype(str)
 
         fig = px.bar(

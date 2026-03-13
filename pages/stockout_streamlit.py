@@ -7,12 +7,9 @@ from pathlib import Path
 from sklearn.base import BaseEstimator, TransformerMixin
 import __main__
 
-from db.supabase_client import get_supabase
+from db.supabase_client import get_supabase, delete_batch
 
 
-# ============================================================
-# Required class for joblib unpickling
-# ============================================================
 class StockoutFeatureEngineer(BaseEstimator, TransformerMixin):
     def __init__(self):
         self.cat_cols = [
@@ -82,9 +79,6 @@ class StockoutFeatureEngineer(BaseEstimator, TransformerMixin):
 __main__.StockoutFeatureEngineer = StockoutFeatureEngineer
 
 
-# ============================================================
-# Page config
-# ============================================================
 st.set_page_config(
     page_title="Stockout AI | Retail Risk Monitor",
     page_icon="📦",
@@ -109,9 +103,6 @@ st.markdown(
 )
 
 
-# ============================================================
-# Resources
-# ============================================================
 @st.cache_resource
 def get_client():
     return get_supabase()
@@ -124,9 +115,6 @@ def load_model():
     return joblib.load(model_path)
 
 
-# ============================================================
-# Supabase helpers
-# ============================================================
 def fetch_system_metrics():
     try:
         supabase = get_client()
@@ -200,9 +188,6 @@ def fetch_recent_batches(limit: int = 20):
         return []
 
 
-# ============================================================
-# Simulation helper
-# ============================================================
 def calculate_risk_level(prob: float) -> str:
     if prob >= 0.80:
         return "🚨 CRITICAL"
@@ -247,9 +232,6 @@ def build_simulation_df(
     })
 
 
-# ============================================================
-# Sidebar simulation panel
-# ============================================================
 st.sidebar.title("Simulation Panel")
 
 with st.sidebar:
@@ -275,16 +257,10 @@ with st.sidebar:
     run_simulation = st.button("Run Simulation", use_container_width=True)
 
 
-# ============================================================
-# Main header
-# ============================================================
 st.title("📦 Strategic Stockout Early Warning System")
+st.caption("Retail dashboard for stored prediction batches and live scenario simulation.")
 st.markdown("---")
 
-
-# ============================================================
-# Top system metrics
-# ============================================================
 total_batches, total_predictions, last_run = fetch_system_metrics()
 
 m1, m2, m3 = st.columns(3)
@@ -300,10 +276,6 @@ with m3:
 
 st.markdown("---")
 
-
-# ============================================================
-# Simulation block
-# ============================================================
 st.subheader("Live Simulation")
 
 try:
@@ -371,10 +343,6 @@ if run_simulation or model_ready:
 
 st.markdown("---")
 
-
-# ============================================================
-# Historical analytics
-# ============================================================
 st.subheader("Stored Batch Analytics")
 
 available_batches = fetch_recent_batches(limit=20)
@@ -383,17 +351,30 @@ latest_batch = fetch_latest_batch_id()
 if not available_batches and latest_batch:
     available_batches = [latest_batch]
 
-selected_batch = None
-if available_batches:
-    default_index = 0
-    if latest_batch in available_batches:
-        default_index = available_batches.index(latest_batch)
+header_left, header_right = st.columns([2, 1])
 
-    selected_batch = st.selectbox(
-        "Select Batch",
-        available_batches,
-        index=default_index
-    )
+with header_left:
+    selected_batch = None
+    if available_batches:
+        default_index = 0
+        if latest_batch in available_batches:
+            default_index = available_batches.index(latest_batch)
+
+        selected_batch = st.selectbox(
+            "Select Batch",
+            available_batches,
+            index=default_index
+        )
+
+with header_right:
+    st.markdown("#### Batch Controls")
+    if selected_batch and st.button("Delete Selected Batch", use_container_width=True):
+        try:
+            delete_batch("stockout_predictions", selected_batch)
+            st.success(f"Deleted batch: {selected_batch}")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Delete failed: {e}")
 
 if not selected_batch:
     st.info("No Stockout prediction batches found yet.")
@@ -454,6 +435,16 @@ st.dataframe(
     use_container_width=True,
     hide_index=True
 )
+
+with st.expander("Batch Interpretation"):
+    st.markdown(
+        """
+- **Risk Probability** estimates the chance of a stockout event.
+- **Risk Level** helps prioritize the most exposed products.
+- **Financial Impact** approximates the revenue at risk linked to those predictions.
+- Use the simulation panel to test scenarios before running manual uploads.
+"""
+    )
 
 st.caption(f"Showing batch_id: {selected_batch}")
 st.caption("Retail Stockout AI Suite | Corporate Dashboard")

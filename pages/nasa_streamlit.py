@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-from db.supabase_client import get_nasa_batches
+from db.supabase_client import get_nasa_batches, delete_batch
 
 
 st.set_page_config(
@@ -61,11 +61,25 @@ if df.empty:
 
 available_batches = get_batch_list(df)
 
-selected_batch = st.selectbox(
-    "Select Batch",
-    available_batches,
-    index=0 if available_batches else None
-)
+top_left, top_right = st.columns([2, 1])
+
+with top_left:
+    selected_batch = st.selectbox(
+        "Select Batch",
+        available_batches,
+        index=0 if available_batches else None
+    )
+
+with top_right:
+    st.markdown("#### Batch Controls")
+    if selected_batch and st.button("Delete Selected Batch", use_container_width=True):
+        try:
+            delete_batch("nasa_predictions", selected_batch)
+            st.success(f"Deleted batch: {selected_batch}")
+            st.cache_data.clear()
+            st.rerun()
+        except Exception as e:
+            st.error(f"Delete failed: {e}")
 
 if not selected_batch:
     st.info("No batch available.")
