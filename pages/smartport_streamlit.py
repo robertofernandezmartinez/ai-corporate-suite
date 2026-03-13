@@ -1,132 +1,182 @@
-import os
-import requests
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-from db.supabase_client import get_supabase
-
-st.set_page_config(page_title="SmartPort AI | Command Center", page_icon="⚓", layout="wide")
+from db.supabase_client import get_smartport_batches
 
 
-@st.cache_resource
-def get_client():
-    return get_supabase()
+st.set_page_config(
+    page_title="SmartPort | Maritime Risk Monitor",
+    page_icon="🚢",
+    layout="wide"
+)
+
+st.title("🚢 SmartPort — Maritime Risk Monitoring")
+st.caption("Operational dashboard for vessel risk batches stored in Supabase.")
 
 
-def fetch_latest_batch_id():
-    supabase = get_client()
-    if not supabase:
-        return None
-
-    resp = (
-        supabase.table("smartport_predictions")
-        .select("batch_id,created_at")
-        .order("created_at", desc=True)
-        .limit(1)
-        .execute()
-    )
-
-    rows = resp.data or []
-    if not rows:
-        return None
-
-    return rows[0]["batch_id"]
-
-
-def fetch_latest_batch_data(batch_id):
-
-    supabase = get_client()
-
-    resp = (
-        supabase.table("smartport_predictions")
-        .select("*")
-        .eq("batch_id", batch_id)
-        .limit(5000)
-        .execute()
-    )
-
-    df = pd.DataFrame(resp.data or [])
-
+@st.cache_data(ttl=60)
+def load_data():
+    df = get_smartport_batches()
+    if df is None:
+        return pd.DataFrame()
     if not df.empty:
-        df["risk_score"] = pd.to_numeric(df["risk_score"], errors="coerce")
-
+        if "risk_score" in df.columns:
+            df["risk_score"] = pd.to_numeric(df["risk_score"], errors="coerce")
+        if "financial_impact" in df.columns:
+            df["financial_impact"] = pd.to_numeric(df["financial_impact"], errors="coerce")
     return df
 
 
-st.title("⚓ SmartPort AI | Command Center")
+def get_batch_list(df: pd.DataFrame):
+    if df.empty or "batch_id" not in df.columns:
+        return []
+    tmp = df[["batch_id", "created_at"]].drop_duplicates()
+    if "created_at" in tmp.columns:
+        tmp = tmp.sort_values("created_at", ascending=False)
+    return tmp["batch_id"].tolist()
+
+
+df = load_data()
+
+st.markdown(
+    """
+This dashboard displays stored SmartPort prediction batches.
+
+**What you are seeing**
+- Each upload creates a new `batch_id`
+- Manual uploads and automatic demo runs can coexist
+- Historical batches remain available until cleaned
+"""
+)
+
 st.markdown("---")
 
-batch_id = fetch_latest_batch_id()
-
-if not batch_id:
-    st.warning("No SmartPort prediction batches found yet. Upload a dataset first.")
-    st.stop()
-
-df = fetch_latest_batch_data(batch_id)
-
 if df.empty:
-    st.warning("Latest SmartPort batch returned no rows.")
+    st.warning("No SmartPort prediction batches found.")
     st.stop()
 
+available_batches = get_batch_list(df)
 
-def recommended_action(level):
-    return {
-        "CRITICAL": "IMMEDIATE: Tugboat standby & route deviation review.",
-        "WARNING": "PROACTIVE: Increase monitoring and validate AIS stability.",
-        "NORMAL": "ROUTINE: Vessel on standard trajectory.",
-    }.get(level, "ROUTINE")
+selected_batch = st.selectbox(
+    "Select Batch",
+    available_batches,
+    index=0 if available_batches else None
+)
 
+if not selected_batch:
+    st.info("No batch available.")
+    st.stop()
 
-df["recommended_action"] = df["risk_level"].map(recommended_action)
+batch_df = df[df["batch_id"] == selected_batch].copy()
 
-total = len(df)
-critical = int((df["risk_level"] == "CRITICAL").sum())
-avg_risk = float(df["risk_score"].fillna(0).mean())
+if batch_df.empty:
+    st.info("Selected batch returned no records.")
+    st.stop()
 
-m1, m2, m3 = st.columns(3)
+total_records = len(batch_df)
+avg_risk = float(batch_df["risk_score"].mean()) if "risk_score" in batch_df.columns else 0.0
+total_exposure = float(batch_df["financial_impact"].sum()) if "financial_impact" in batch_df.columns else 0.0
+critical_count = int((batch_df["risk_level"] == "CRITICAL").sum()) if "risk_level" in batch_df.columns else 0
+
+m1, m2, m3, m4 = st.columns(4)
 
 with m1:
-    st.metric("Active Vessel Records", total)
+    st.metric("Batch Records", total_records)
 
 with m2:
-    st.metric("Critical Alerts", critical)
+    st.metric("Average Risk Score", f"{avg_risk:.3f}")
 
 with m3:
-    st.metric("Average Risk Score", f"{avg_risk:.2f}")
+    st.metric("Critical Events", critical_count)
 
+with m4:
+    st.metric("Financial Exposure", f"${total_exposure:,.0f}")
 
-left, right = st.columns([2, 1])
+st.markdown("---")
+
+left, right = st.columns([1.5, 1])
 
 with left:
+    if {"vessel_id", "financial_impact", "risk_level"}.issubset(batch_df.columns):
+        top_df = (
+            batch_df
+            .sort_values("financial_impact", ascending=False)
+            .head(20)
+        )
 
-    st.subheader("Live Vessel Risk Monitor")
+        fig = px.bar(
+            top_df,
+            x="vessel_id",
+            y="financial_impact",
+            color="risk_level",
+            title="Top Vessels by Estimated Financial Exposure"
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
-    dist = df["risk_level"].value_counts().reset_index()
-    dist.columns = ["risk_level", "count"]
+    elif {"financial_impact", "risk_level"}.issubset(batch_df.columns):
+        top_df = (
+            batch_df
+            .sort_values("financial_impact", ascending=False)
+            .head(20)
+            .reset_index(drop=True)
+        )
+        top_df["record"] = top_df.index.astype(str)
 
-    fig = px.bar(
-        dist,
-        x="risk_level",
-        y="count",
-        color="risk_level",
-        title="Risk Level Distribution"
-    )
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.dataframe(df.head(50), use_container_width=True)
+        fig = px.bar(
+            top_df,
+            x="record",
+            y="financial_impact",
+            color="risk_level",
+            title="Top Records by Estimated Financial Exposure"
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
 with right:
+    if "risk_level" in batch_df.columns:
+        risk_dist = batch_df["risk_level"].value_counts().reset_index()
+        risk_dist.columns = ["risk_level", "count"]
 
-    st.subheader("🕹️ Tactical Control")
+        fig2 = px.pie(
+            risk_dist,
+            names="risk_level",
+            values="count",
+            title="Risk Distribution"
+        )
+        st.plotly_chart(fig2, use_container_width=True)
 
-    vessel_options = df["vessel_index"].astype(str).unique()
+st.subheader("Batch Records")
 
-    vessel = st.selectbox("Select Vessel", vessel_options)
+preferred_cols = [
+    "vessel_id",
+    "risk_score",
+    "risk_level",
+    "financial_impact",
+    "created_at",
+]
 
-    row = df[df["vessel_index"].astype(str) == vessel].iloc[0]
+visible_cols = [c for c in preferred_cols if c in batch_df.columns]
+if visible_cols:
+    st.dataframe(
+        batch_df[visible_cols].head(200),
+        use_container_width=True,
+        hide_index=True
+    )
+else:
+    st.dataframe(
+        batch_df.head(200),
+        use_container_width=True,
+        hide_index=True
+    )
 
-    st.info(row["recommended_action"])
+with st.expander("Batch Interpretation"):
+    st.markdown(
+        """
+- **Risk Score** estimates the probability or intensity of operational risk.
+- **Risk Level** groups predictions into easier business categories.
+- **Financial Exposure** approximates the potential economic impact.
+- Use the batch selector to compare historical runs without mixing datasets.
+"""
+    )
 
-st.caption(f"Batch: {batch_id}")
+st.caption(f"Showing batch_id: {selected_batch}")
