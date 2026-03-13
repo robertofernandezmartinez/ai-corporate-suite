@@ -6,6 +6,8 @@ https://ui-production-a2ba.up.railway.app
 **Production API**  
 https://api-production-dd2a.up.railway.app
 
+![System Architecture](images/system_architecture.png)
+
 ---
 
 # Overview
@@ -40,33 +42,6 @@ The platform is deployed as two independent services on **Railway**:
 - **API Service** — FastAPI inference engine
 
 Predictions are persisted in **Supabase (PostgreSQL)**.
-
-## Platform Flow
-
-```text
-Manual Interaction
-------------------
-Users
-  ↓
-Streamlit UI / Telegram Bot
-  ↓
-FastAPI API
-  ↓
-ML Pipelines
-  ↓
-Supabase Database
-  ↓
-Dashboards
-
-Automated Operations
---------------------
-Automation Scripts
-(auto demo loading / cleanup)
-  ↓
-FastAPI API / Supabase Database
-  ↓
-Dashboards
-```
 
 ---
 
