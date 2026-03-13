@@ -2,6 +2,7 @@ import os
 import requests
 import streamlit as st
 from db.supabase_client import get_supabase
+from ui_theme import apply_suite_theme, render_page_header
 
 
 st.set_page_config(
@@ -9,6 +10,8 @@ st.set_page_config(
     page_icon="⬆️",
     layout="wide",
 )
+
+apply_suite_theme()
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 
@@ -77,8 +80,11 @@ def clear_all_tables():
     supabase.table("nasa_predictions").delete().neq("prediction_id", "").execute()
 
 
-st.title("⬆️ Upload Center")
-st.caption("Run manual uploads, inspect module status, and manage stored prediction batches.")
+render_page_header(
+    "⬆️ Upload Center",
+    "Run manual uploads, inspect module status, and manage stored prediction batches.",
+    tags=["Manual Uploads", "Batch Control", "Supabase Persistence"]
+)
 
 ok, msg = api_healthcheck(API_BASE_URL)
 
@@ -97,45 +103,49 @@ with st.sidebar:
         "The API runs inference and stores results in Supabase."
     )
 
-st.markdown("---")
-
 st.subheader("Platform Workflow")
 st.markdown(
     """
-**Manual Uploads**  
-You upload a file from this page. The API processes it, generates predictions, and stores them as a new batch.
+<div class="suite-card">
+<p><strong>Manual Uploads</strong><br>
+You upload a file from this page. The API processes it, generates predictions, and stores them as a new batch.</p>
 
-**Automatic Demo Data**  
-The suite also includes automation scripts that can periodically populate the database with demo predictions.
+<p><strong>Automatic Demo Data</strong><br>
+The suite also includes automation scripts that can periodically populate the database with demo predictions.</p>
 
-**Automatic Cleanup**  
-Old prediction batches can be removed automatically to keep the database manageable.
+<p><strong>Automatic Cleanup</strong><br>
+Old prediction batches can be removed automatically to keep the database manageable.</p>
 
-**Batch Logic**  
-Each upload creates a new `batch_id`, so manual uploads and automatic demo runs can coexist without overwriting one another.
-"""
+<p><strong>Batch Logic</strong><br>
+Each upload creates a new <code>batch_id</code>, so manual uploads and automatic demo runs can coexist without overwriting one another.</p>
+</div>
+    """,
+    unsafe_allow_html=True,
 )
-
-st.markdown("---")
 
 st.subheader("Module Overview")
 
 overview_cols = st.columns(3)
-
 module_keys = list(MODULES.keys())
+
 for i, module_name in enumerate(module_keys):
     module = MODULES[module_name]
     total_batches, total_predictions, last_run = fetch_table_metrics(module["table"])
 
     with overview_cols[i]:
-        st.markdown(f"### {module_name}")
-        st.write(module["description"])
-        st.caption(f"Demo file: `{module['demo_file']}`")
+        st.markdown(
+            f"""
+<div class="suite-card">
+<h3>{module_name}</h3>
+<p>{module["description"]}</p>
+<p><strong>Demo file:</strong> <code>{module["demo_file"]}</code></p>
+</div>
+            """,
+            unsafe_allow_html=True,
+        )
         st.metric("Stored Batches", total_batches)
         st.metric("Stored Predictions", total_predictions)
         st.caption(f"Last run: {last_run if last_run else 'N/A'}")
-
-st.markdown("---")
 
 left_col, right_col = st.columns([1.4, 1])
 
@@ -196,7 +206,6 @@ with left_col:
                         dist = payload.get("distribution")
                         st.metric("Has Distribution", "Yes" if isinstance(dist, dict) else "No")
 
-                    st.markdown("---")
                     st.subheader("What happens next")
                     st.write(
                         "Open the corresponding dashboard page to inspect the latest stored batch. "
@@ -232,8 +241,6 @@ with right_col:
         except Exception as e:
             st.error(f"Module cleanup failed: {e}")
 
-    st.markdown("")
-
     if st.button("Delete All Batches in Entire Suite", use_container_width=True):
         try:
             clear_all_tables()
@@ -241,8 +248,6 @@ with right_col:
             st.rerun()
         except Exception as e:
             st.error(f"Global cleanup failed: {e}")
-
-st.markdown("---")
 
 st.subheader("Operational Notes")
 st.markdown(
