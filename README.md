@@ -1,5 +1,7 @@
 # AI Corporate Suite
 
+AI Corporate Suite is an operational AI platform integrating multiple machine learning applications into a unified production system with dashboards, APIs, automation, and messaging interfaces.
+
 **Live Suite**  
 https://ui-production-a2ba.up.railway.app
 
