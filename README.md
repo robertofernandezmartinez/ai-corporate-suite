@@ -24,6 +24,7 @@ The system allows users to:
 - trigger machine learning inference through a dedicated API
 - persist predictions in a cloud database
 - analyze historical runs through dashboards
+- communicate with the system directly through Telegram bot
 - run automated demo data loading
 - automatically clean old predictions
 
@@ -53,7 +54,7 @@ ML pipelines
   ↓
 Supabase database
   ↓
-Dashboards
+Dashboards / Telegram bot
 ```
 
 ---
@@ -69,6 +70,30 @@ The project uses a separated architecture so that:
 This architecture reflects a realistic deployment pattern for production machine learning systems.
 
 ---
+
+## Telegram Bot Integration
+
+The platform includes a Telegram bot that provides an alternative interface to interact with the AI Corporate Suite outside the Streamlit UI.
+
+The bot allows users to communicate with the system directly through Telegram, enabling simple command-based interactions with the available AI modules.
+
+Main purposes of the bot:
+
+- provide a conversational interface for the platform
+- allow quick interaction with the AI modules
+- demonstrate how the platform can be extended beyond a traditional web dashboard
+
+Bot script location:
+
+```
+bot/telegram_bot.py
+```
+
+The bot can be used to trigger operations, retrieve information about the system, or integrate the platform with messaging workflows.
+
+Although the primary interface of the platform is the Streamlit dashboard, the Telegram bot demonstrates how the system can be expanded into multi-channel interfaces for operational environments.
+
+--
 
 # AI Modules
 
