@@ -538,3 +538,4 @@ SUPABASE_SERVICE_ROLE_KEY
 # Author
 
 Roberto Fernández
+https://www.linkedin.com/in/robertofernandezmartinez/
