@@ -8,6 +8,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 import __main__
 
 from db.supabase_client import get_supabase, delete_batch
+from ui_theme import apply_suite_theme, render_page_header
 
 
 class StockoutFeatureEngineer(BaseEstimator, TransformerMixin):
@@ -85,21 +86,12 @@ st.set_page_config(
     layout="wide"
 )
 
-st.markdown(
-    """
-    <style>
-    .main { background-color: #0e1117; color: white; }
-    div[data-testid="stMetric"] {
-        background-color: #1e2130;
-        padding: 20px;
-        border-radius: 12px;
-        border: 1px solid #3e4259;
-    }
-    div[data-testid="stMetricValue"] { color: #ffffff; }
-    footer {visibility: hidden;}
-    </style>
-    """,
-    unsafe_allow_html=True
+apply_suite_theme()
+
+render_page_header(
+    "📦 Strategic Stockout Early Warning System",
+    "Retail dashboard for stored prediction batches and live scenario simulation.",
+    tags=["Retail AI", "Simulation", "Revenue Risk"]
 )
 
 
@@ -256,11 +248,6 @@ with st.sidebar:
 
     run_simulation = st.button("Run Simulation", use_container_width=True)
 
-
-st.title("📦 Strategic Stockout Early Warning System")
-st.caption("Retail dashboard for stored prediction batches and live scenario simulation.")
-st.markdown("---")
-
 total_batches, total_predictions, last_run = fetch_system_metrics()
 
 m1, m2, m3 = st.columns(3)
@@ -274,7 +261,19 @@ with m2:
 with m3:
     st.metric("Last System Run", last_run if last_run else "N/A")
 
-st.markdown("---")
+st.markdown(
+    """
+<div class="suite-card">
+<p><strong>What you are seeing</strong></p>
+<ul>
+<li>The left sidebar simulates a retail operating scenario</li>
+<li>Stored batches represent past uploads or automated demo runs</li>
+<li>Manual uploads and automated runs coexist through unique <code>batch_id</code> values</li>
+</ul>
+</div>
+    """,
+    unsafe_allow_html=True,
+)
 
 st.subheader("Live Simulation")
 
@@ -329,8 +328,6 @@ if run_simulation or model_ready:
     st.subheader("Safety Stock Analysis")
     st.progress(float(np.clip(prob, 0.0, 1.0)))
 
-    st.markdown("---")
-
     if prob > 0.75:
         st.error(f"**IMMEDIATE ACTION**: High risk in **{region}**. Issue replenishment order.")
     elif prob > 0.40:
@@ -340,8 +337,6 @@ if run_simulation or model_ready:
 
     with st.expander("View Simulation Input"):
         st.dataframe(input_df, use_container_width=True, hide_index=True)
-
-st.markdown("---")
 
 st.subheader("Stored Batch Analytics")
 

@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 
 from db.supabase_client import get_nasa_batches, delete_batch
+from ui_theme import apply_suite_theme, render_page_header
 
 
 st.set_page_config(
@@ -11,8 +12,13 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🛠️ NASA RUL — Predictive Maintenance Monitoring")
-st.caption("Operational dashboard for stored Remaining Useful Life prediction batches.")
+apply_suite_theme()
+
+render_page_header(
+    "🛠️ NASA RUL — Predictive Maintenance Monitoring",
+    "Operational dashboard for stored Remaining Useful Life prediction batches.",
+    tags=["Predictive Maintenance", "Engine Health", "RUL Analytics"]
+)
 
 
 @st.cache_data(ttl=60)
@@ -43,17 +49,18 @@ df = load_data()
 
 st.markdown(
     """
-This dashboard displays stored NASA predictive maintenance batches.
-
-**What you are seeing**
-- Each upload creates a new `batch_id`
-- Manual uploads and automatic demo runs can coexist
-- Historical batches remain available until cleaned
-- The main prediction is **Remaining Useful Life (RUL)**
-"""
+<div class="suite-card">
+<p><strong>What you are seeing</strong></p>
+<ul>
+<li>Each upload creates a new <code>batch_id</code></li>
+<li>Manual uploads and automatic demo runs can coexist</li>
+<li>Historical batches remain available until cleaned</li>
+<li>The main prediction is <strong>Remaining Useful Life (RUL)</strong></li>
+</ul>
+</div>
+    """,
+    unsafe_allow_html=True,
 )
-
-st.markdown("---")
 
 if df.empty:
     st.warning("No NASA prediction batches found.")
@@ -109,8 +116,6 @@ with m3:
 
 with m4:
     st.metric("Minimum Predicted RUL", f"{min_rul:.1f}")
-
-st.markdown("---")
 
 left, right = st.columns([1.5, 1])
 

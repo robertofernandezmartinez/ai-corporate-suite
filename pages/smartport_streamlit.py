@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 
 from db.supabase_client import get_smartport_batches, delete_batch
+from ui_theme import apply_suite_theme, render_page_header
 
 
 st.set_page_config(
@@ -11,8 +12,13 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🚢 SmartPort — Maritime Risk Monitoring")
-st.caption("Operational dashboard for vessel risk batches stored in Supabase.")
+apply_suite_theme()
+
+render_page_header(
+    "🚢 SmartPort — Maritime Risk Monitoring",
+    "Operational dashboard for vessel risk batches stored in Supabase.",
+    tags=["Maritime AI", "Batch Analytics", "Financial Exposure"]
+)
 
 
 @st.cache_data(ttl=60)
@@ -41,16 +47,17 @@ df = load_data()
 
 st.markdown(
     """
-This dashboard displays stored SmartPort prediction batches.
-
-**What you are seeing**
-- Each upload creates a new `batch_id`
-- Manual uploads and automatic demo runs can coexist
-- Historical batches remain available until cleaned
-"""
+<div class="suite-card">
+<p><strong>What you are seeing</strong></p>
+<ul>
+<li>Each upload creates a new <code>batch_id</code></li>
+<li>Manual uploads and automatic demo runs can coexist</li>
+<li>Historical batches remain available until cleaned</li>
+</ul>
+</div>
+    """,
+    unsafe_allow_html=True,
 )
-
-st.markdown("---")
 
 if df.empty:
     st.warning("No SmartPort prediction batches found.")
@@ -106,8 +113,6 @@ with m3:
 
 with m4:
     st.metric("Financial Exposure", f"${total_exposure:,.0f}")
-
-st.markdown("---")
 
 left, right = st.columns([1.5, 1])
 
