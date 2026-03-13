@@ -14,11 +14,11 @@ https://api-production-dd2a.up.railway.app
 
 AI Corporate Suite is an operational AI platform that integrates multiple machine learning applications into a single production-style environment.
 
-The platform currently includes three applied AI modules:
+The platform currently includes three applied AI modules that also exist as standalone projects separately:
 
-- **SmartPort** — Maritime operational risk prediction
-- **Stockout** — Retail inventory stockout prediction
-- **NASA RUL** — Predictive maintenance and Remaining Useful Life estimation
+- **SmartPort** — Maritime operational risk prediction (standalone project: https://github.com/robertofernandezmartinez/smartport-ai-risk-early-warning )
+- **Stockout** — Retail inventory stockout prediction (standalone project: https://github.com/robertofernandezmartinez/retail-stockout-risk-scoring )
+- **NASA RUL** — Predictive maintenance and Remaining Useful Life estimation (s) (standalone project: https://github.com/robertofernandezmartinez/cmapss-rul-prediction )
 
 The system allows users to:
 
