@@ -1,12 +1,8 @@
 import os
 import requests
 import streamlit as st
+from db.supabase_client import get_supabase
 
-# =========================
-# Upload Center (Streamlit)
-# =========================
-# This page uploads raw datasets to the FastAPI backend. The backend runs inference and writes predictions to Supabase.
-# IMPORTANT: In production, API_BASE_URL must be set to Railway FastAPI domain (e.g. https://api-xxx.up.railway.app)
 
 st.set_page_config(
     page_title="Upload Center | AI Corporate Suite",
@@ -14,10 +10,6 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("⬆️ Upload Center")
-st.caption("Upload raw datasets to trigger predictions via the FastAPI backend and persist results into Supabase.")
-
-# Base URL for FastAPI (Railway domain in production)
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 
 MODULES = {
@@ -25,102 +17,239 @@ MODULES = {
         "endpoint": "/smartport/upload",
         "help": "Upload vessel tracking CSV (AIS-like telemetry).",
         "accepted": [".csv"],
+        "table": "smartport_predictions",
+        "description": "Maritime operational risk prediction for vessel activity and exposure monitoring.",
+        "demo_file": "tracking_db_demo.csv",
     },
     "Stockout (Retail Risk)": {
         "endpoint": "/stockout/upload",
         "help": "Upload retail inventory CSV (PRO schema).",
         "accepted": [".csv"],
+        "table": "stockout_predictions",
+        "description": "Retail stockout probability and financial exposure prediction.",
+        "demo_file": "retail_store_inventory_PRO.csv",
     },
     "NASA (RUL Prediction)": {
         "endpoint": "/nasa/upload",
-        "help": "Upload NASA engine dataset CSV (must include unit_id, cycle).",
-        "accepted": [".csv", ".txt"],
+        "help": "Upload NASA CMAPSS raw telemetry TXT file.",
+        "accepted": [".txt", ".csv"],
+        "table": "nasa_predictions",
+        "description": "Remaining Useful Life prediction for turbofan engines.",
+        "demo_file": "train_FD001.txt",
     },
 }
 
 
 def api_healthcheck(base_url: str) -> tuple[bool, str]:
-    """
-    Calls GET / on the FastAPI service to confirm the UI can reach the API.
-    """
     try:
         r = requests.get(f"{base_url}/", timeout=10)
         if r.status_code != 200:
             return False, f"API returned {r.status_code}: {r.text}"
-        return True, "API reachable (GET / returned 200)."
+        return True, "API reachable"
     except Exception as e:
         return False, f"API not reachable: {e}"
 
 
+def fetch_table_metrics(table_name: str):
+    try:
+        supabase = get_supabase()
+        resp = supabase.table(table_name).select("batch_id,created_at").execute()
+        rows = resp.data or []
+
+        total_predictions = len(rows)
+        total_batches = len(set(r["batch_id"] for r in rows if r.get("batch_id"))) if rows else 0
+        last_run = max((r["created_at"] for r in rows if r.get("created_at")), default=None)
+
+        return total_batches, total_predictions, last_run
+    except Exception:
+        return 0, 0, None
+
+
+def clear_table(table_name: str):
+    supabase = get_supabase()
+    supabase.table(table_name).delete().neq("prediction_id", "").execute()
+
+
+def clear_all_tables():
+    supabase = get_supabase()
+    supabase.table("smartport_predictions").delete().neq("prediction_id", "").execute()
+    supabase.table("stockout_predictions").delete().neq("prediction_id", "").execute()
+    supabase.table("nasa_predictions").delete().neq("prediction_id", "").execute()
+
+
+st.title("⬆️ Upload Center")
+st.caption("Run manual uploads, inspect module status, and manage stored prediction batches.")
+
+ok, msg = api_healthcheck(API_BASE_URL)
+
 with st.sidebar:
-    st.subheader("Configuration")
+    st.subheader("Platform Configuration")
     st.write("**API Base URL**")
     st.code(API_BASE_URL)
 
-    ok, msg = api_healthcheck(API_BASE_URL)
-    st.success(msg) if ok else st.error(msg)
+    if ok:
+        st.success(msg)
+    else:
+        st.error(msg)
 
     st.info(
-        "Set `API_BASE_URL` in Railway (UI service → Variables) to point Streamlit to your FastAPI service."
+        "The UI sends uploaded files to the FastAPI service. "
+        "The API runs inference and stores results in Supabase."
     )
-
-
-module_name = st.selectbox("Choose a module", list(MODULES.keys()))
-module = MODULES[module_name]
 
 st.markdown("---")
 
-st.subheader("1) Select a Raw Data File")
-uploaded = st.file_uploader(
-    label=module["help"],
-    type=[ext.replace(".", "") for ext in module["accepted"]],
+st.subheader("Platform Workflow")
+st.markdown(
+    """
+**Manual Uploads**  
+You upload a file from this page. The API processes it, generates predictions, and stores them as a new batch.
+
+**Automatic Demo Data**  
+The suite also includes automation scripts that can periodically populate the database with demo predictions.
+
+**Automatic Cleanup**  
+Old prediction batches can be removed automatically to keep the database manageable.
+
+**Batch Logic**  
+Each upload creates a new `batch_id`, so manual uploads and automatic demo runs can coexist without overwriting one another.
+"""
 )
 
-st.subheader("2) Run Predictions")
-run = st.button("🚀 Run Predictions", disabled=(uploaded is None))
+st.markdown("---")
 
-if run:
-    try:
-        url = f"{API_BASE_URL}{module['endpoint']}"
+st.subheader("Module Overview")
 
-        with st.spinner("Sending file to API and running inference..."):
-            # Provide filename + content + content-type
-            files = {
-                "file": (
-                    uploaded.name,
-                    uploaded.getvalue(),
-                    "text/csv",
-                )
-            }
-            r = requests.post(url, files=files, timeout=300)
+overview_cols = st.columns(3)
 
-        if r.status_code != 200:
-            st.error(f"API error {r.status_code}: {r.text}")
-        else:
-            payload = r.json()
+module_keys = list(MODULES.keys())
+for i, module_name in enumerate(module_keys):
+    module = MODULES[module_name]
+    total_batches, total_predictions, last_run = fetch_table_metrics(module["table"])
 
-            if payload.get("success") is True:
-                st.success("Predictions completed successfully.")
+    with overview_cols[i]:
+        st.markdown(f"### {module_name}")
+        st.write(module["description"])
+        st.caption(f"Demo file: `{module['demo_file']}`")
+        st.metric("Stored Batches", total_batches)
+        st.metric("Stored Predictions", total_predictions)
+        st.caption(f"Last run: {last_run if last_run else 'N/A'}")
+
+st.markdown("---")
+
+left_col, right_col = st.columns([1.4, 1])
+
+with left_col:
+    st.subheader("Manual Upload")
+
+    module_name = st.selectbox("Choose a module", list(MODULES.keys()))
+    module = MODULES[module_name]
+
+    st.write(module["description"])
+    st.caption(f"Accepted formats: {', '.join(module['accepted'])}")
+
+    uploaded = st.file_uploader(
+        label=module["help"],
+        type=[ext.replace(".", "") for ext in module["accepted"]],
+        key=f"upload_{module_name}",
+    )
+
+    run = st.button("🚀 Run Predictions", disabled=(uploaded is None), use_container_width=True)
+
+    if run:
+        try:
+            url = f"{API_BASE_URL}{module['endpoint']}"
+
+            if uploaded is None:
+                st.warning("Please select a file before running predictions.")
             else:
-                st.warning("Request completed, but the engine reported an error.")
+                content_type = "text/plain" if uploaded.name.lower().endswith(".txt") else "text/csv"
 
-            st.json(payload)
+                with st.spinner("Sending file to API and running inference..."):
+                    files = {
+                        "file": (
+                            uploaded.name,
+                            uploaded.getvalue(),
+                            content_type,
+                        )
+                    }
+                    r = requests.post(url, files=files, timeout=300)
 
-            # Quick highlights if available
-            cols = st.columns(3)
-            with cols[0]:
-                st.metric("Processed Records", payload.get("processed_records", "—"))
-            with cols[1]:
-                st.metric("Batch ID", payload.get("batch_id", "—"))
-            with cols[2]:
-                dist = payload.get("distribution")
-                st.metric("Has Distribution", "Yes" if isinstance(dist, dict) else "No")
+                if r.status_code != 200:
+                    st.error(f"API error {r.status_code}: {r.text}")
+                else:
+                    payload = r.json()
 
-            st.markdown("---")
-            st.subheader("Next")
-            st.write("Open the relevant dashboard page to view the **latest batch** (batch_id is used to avoid mixing data).")
+                    if payload.get("success") is True:
+                        st.success("Predictions completed successfully.")
+                    else:
+                        st.warning("Request completed, but the engine reported an error.")
 
-    except requests.exceptions.Timeout:
-        st.error("Timeout: the API took too long to respond. Try a smaller file or increase server resources.")
-    except Exception as e:
-        st.error(f"Unexpected error: {e}")
+                    st.json(payload)
+
+                    cols = st.columns(3)
+                    with cols[0]:
+                        st.metric("Processed Records", payload.get("processed_records", "—"))
+                    with cols[1]:
+                        st.metric("Batch ID", payload.get("batch_id", "—"))
+                    with cols[2]:
+                        dist = payload.get("distribution")
+                        st.metric("Has Distribution", "Yes" if isinstance(dist, dict) else "No")
+
+                    st.markdown("---")
+                    st.subheader("What happens next")
+                    st.write(
+                        "Open the corresponding dashboard page to inspect the latest stored batch. "
+                        "Each run is stored separately using a unique `batch_id`."
+                    )
+
+        except requests.exceptions.Timeout:
+            st.error("Timeout: the API took too long to respond. Try a smaller file or increase server resources.")
+        except Exception as e:
+            st.error(f"Unexpected error: {e}")
+
+with right_col:
+    st.subheader("Batch Management")
+
+    selected_cleanup_module = st.selectbox(
+        "Select module to clean",
+        list(MODULES.keys()),
+        key="cleanup_module"
+    )
+
+    cleanup_table = MODULES[selected_cleanup_module]["table"]
+    cleanup_batches, cleanup_predictions, cleanup_last_run = fetch_table_metrics(cleanup_table)
+
+    st.metric("Module Batches", cleanup_batches)
+    st.metric("Module Predictions", cleanup_predictions)
+    st.caption(f"Last run: {cleanup_last_run if cleanup_last_run else 'N/A'}")
+
+    if st.button("Delete All Batches for Selected Module", use_container_width=True):
+        try:
+            clear_table(cleanup_table)
+            st.success(f"All batches deleted for {selected_cleanup_module}")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Module cleanup failed: {e}")
+
+    st.markdown("")
+
+    if st.button("Delete All Batches in Entire Suite", use_container_width=True):
+        try:
+            clear_all_tables()
+            st.success("All prediction tables cleared across the suite.")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Global cleanup failed: {e}")
+
+st.markdown("---")
+
+st.subheader("Operational Notes")
+st.markdown(
+    """
+- Manual uploads create new batches and do **not** overwrite previous runs.
+- Automatic demo loading can coexist with manual uploads.
+- Cleanup can remove either one module's stored history or the full suite history.
+- If you want a completely clean demo, clear the relevant table before uploading a new file.
+"""
+)
