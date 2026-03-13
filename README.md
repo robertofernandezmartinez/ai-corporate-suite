@@ -34,27 +34,38 @@ This repository demonstrates how machine learning models can be integrated into 
 
 # Live Architecture
 
-The platform is deployed as two independent services on Railway:
+The platform is deployed as two independent services on **Railway**:
 
 - **UI Service** — Streamlit dashboards
 - **API Service** — FastAPI inference engine
 
 Predictions are persisted in **Supabase (PostgreSQL)**.
 
-System flow:
+## Platform Flow
 
-```
-User
+```text
+Manual Interaction
+------------------
+Users
   ↓
-Streamlit UI
+Streamlit UI / Telegram Bot
   ↓
 FastAPI API
   ↓
-ML pipelines
+ML Pipelines
   ↓
-Supabase database
+Supabase Database
   ↓
-Dashboards / Telegram bot
+Dashboards
+
+Automated Operations
+--------------------
+Automation Scripts
+(auto demo loading / cleanup)
+  ↓
+FastAPI API / Supabase Database
+  ↓
+Dashboards
 ```
 
 ---
