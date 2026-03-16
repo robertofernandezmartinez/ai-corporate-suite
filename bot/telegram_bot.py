@@ -1,5 +1,6 @@
 import logging
 import os
+from typing import Dict, Any
 
 import telebot
 from anthropic import Anthropic
@@ -19,10 +20,15 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 API_URL = os.getenv(
     "SUITE_API_URL",
-    "https://ai-corporate-suite-production.up.railway.app"
+    "https://ai-corporate-suite-production.up.railway.app",
 )
 
-logging.basicConfig(level=logging.INFO)
+BOT_BUILD = "NEW BUILD 1745"
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 if not BOT_TOKEN:
@@ -35,11 +41,14 @@ bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 claude = Anthropic(api_key=ANTHROPIC_KEY) if ANTHROPIC_KEY else None
 
+logger.info("Telegram bot initialized | build=%s", BOT_BUILD)
+logger.info("Claude enabled: %s", bool(claude))
+
 
 # =========================
 # 2. DATA HELPERS
 # =========================
-def get_supabase_context() -> dict:
+def get_supabase_context() -> Dict[str, Any]:
     """
     Fetch real-time summary from the 3 platform pillars.
     """
@@ -92,7 +101,8 @@ def build_status_report() -> str:
     ctx = get_supabase_context()
 
     report = [
-        "📊 *EXECUTIVE SYSTEM REPORT*",
+        f"📊 *EXECUTIVE SYSTEM REPORT*",
+        f"_Build: {BOT_BUILD}_",
         "━━━━━━━━━━━━━━━━━━",
         "",
         "🚢 *SMARTPORT LOGISTICS*",
@@ -131,17 +141,65 @@ def send_push_alert(message: str) -> dict:
         logger.info("Telegram alert sent successfully")
         return {"sent": 1}
     except Exception as exc:
-        logger.exception("Failed to send Telegram alert: %s", exc)
+        logger.exception("Failed to send Telegram alert")
         return {"sent": 0, "error": str(exc)}
 
 
 # =========================
-# 4. TELEGRAM HANDLERS
+# 4. CLAUDE CALL
+# =========================
+def ask_claude(user_text: str) -> str:
+    if not claude:
+        raise RuntimeError("ANTHROPIC_API_KEY missing or Claude client not initialized")
+
+    context = get_supabase_context()
+
+    system_prompt = f"""
+You are the AI Corporate Assistant for an industrial AI platform.
+
+Current platform data:
+- SmartPort: {context['smartport']}
+- NASA RUL: {context['nasa']}
+- Stockout: {context['stockout']}
+
+Rules:
+1. Reply in the same language as the user.
+2. Be concise, executive, and operational.
+3. Use Markdown only when useful.
+4. If there are CRITICAL or HIGH risks, highlight them clearly.
+5. Focus on actionable interpretation, not generic theory.
+6. If the user asks for priorities, rank the main operational risks first.
+"""
+
+    response = claude.messages.create(
+        model="claude-3-haiku-20240307",
+        max_tokens=500,
+        system=system_prompt,
+        messages=[
+            {"role": "user", "content": user_text}
+        ],
+    )
+
+    if not response.content:
+        raise RuntimeError("Claude returned empty content")
+
+    text_blocks = [block.text for block in response.content if hasattr(block, "text")]
+    reply_text = "\n".join(text_blocks).strip()
+
+    if not reply_text:
+        raise RuntimeError("Claude returned no text blocks")
+
+    return reply_text
+
+
+# =========================
+# 5. TELEGRAM HANDLERS
 # =========================
 @bot.message_handler(commands=["start", "help"])
 def welcome(message):
     welcome_text = (
-        "✨ *AI Corporate Suite v2.0* ✨\n"
+        f"✨ *AI Corporate Suite v2.0* ✨\n"
+        f"_Build: {BOT_BUILD}_\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "Hello. I am your *Industrial Intelligence Assistant*.\n\n"
         "🚀 *Available Commands*\n"
@@ -161,10 +219,10 @@ def status_report(message):
         report = build_status_report()
         bot.reply_to(message, report)
     except Exception as exc:
-        logger.exception("Status report failed: %s", exc)
+        logger.exception("Status report failed")
         bot.reply_to(
             message,
-            "❌ Error generating status report. Please try again."
+            f"❌ Status error: `{str(exc)}`"
         )
 
 
@@ -172,55 +230,20 @@ def status_report(message):
 def handle_ai(message):
     bot.send_chat_action(message.chat.id, "typing")
 
-    if not claude:
-        bot.reply_to(
-            message,
-            "⚠️ Claude is not configured right now. Available commands: `/status` and `/help`."
-        )
-        return
-
     try:
-        context = get_supabase_context()
-
-        system_prompt = f"""
-You are the AI Corporate Assistant for an industrial AI platform.
-
-Current platform data:
-- SmartPort: {context['smartport']}
-- NASA RUL: {context['nasa']}
-- Stockout: {context['stockout']}
-
-Rules:
-1. Reply in the same language as the user.
-2. Be concise, executive, and useful.
-3. Use Markdown formatting when helpful.
-4. If there are CRITICAL or HIGH risks, highlight them clearly.
-5. Focus on operational implications, not generic theory.
-"""
-
-        response = claude.messages.create(
-            model="claude-3-haiku-20240307",
-            max_tokens=700,
-            system=system_prompt,
-            messages=[
-                {"role": "user", "content": message.text}
-            ],
-        )
-
-        reply_text = response.content[0].text.strip()
+        reply_text = ask_claude(message.text)
         bot.reply_to(message, reply_text)
-
     except Exception as exc:
-        logger.exception("Claude response failed:")
+        logger.exception("Claude response failed")
         bot.reply_to(
             message,
-            f"❌ Claude error: {str(exc)}"
+            f"❌ Claude error:\n`{str(exc)}`"
         )
 
 
 # =========================
-# 5. LOCAL RUN
+# 6. LOCAL RUN
 # =========================
 if __name__ == "__main__":
     logger.info("🚀 AI Corporate Suite Telegram bot is live...")
-    bot.infinity_polling(skip_pending=True)
+    bot.infinity_polling(skip_pending=True, timeout=30, long_polling_timeout=30)
