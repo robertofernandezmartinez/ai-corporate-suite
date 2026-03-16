@@ -109,6 +109,26 @@ def handle_ai(message):
     )
     bot.reply_to(message, response.content[0].text, parse_mode='Markdown')
 
+def send_push_alert(message: str):
+    """
+    Send alert message to configured Telegram chat.
+    Used by predictors when high-risk events are detected.
+    """
+
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+
+    if not bot:
+        return {"sent": 0, "error": "Bot not initialized"}
+
+    if not chat_id:
+        return {"sent": 0, "error": "TELEGRAM_CHAT_ID missing"}
+
+    try:
+        bot.send_message(chat_id, message, parse_mode="Markdown")
+        return {"sent": 1}
+    except Exception as exc:
+        return {"sent": 0, "error": str(exc)}
+
 if __name__ == "__main__":
     print("🚀 Corporate Visual Bot is live...")
     bot.infinity_polling()
