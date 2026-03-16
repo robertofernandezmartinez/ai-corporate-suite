@@ -211,10 +211,10 @@ Rules:
         bot.reply_to(message, reply_text)
 
     except Exception as exc:
-        logger.exception("Claude response failed: %s", exc)
+        logger.exception("Claude response failed:")
         bot.reply_to(
             message,
-            "❌ I could not process that request right now."
+            f"❌ Claude error: {str(exc)}"
         )
 
 
