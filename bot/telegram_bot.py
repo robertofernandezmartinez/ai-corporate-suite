@@ -1,134 +1,226 @@
-import telebot
-import requests
+import logging
 import os
+
+import telebot
 from anthropic import Anthropic
 from dotenv import load_dotenv
 from supabase import create_client
 
-# 1. SETUP
+
+# =========================
+# 1. CONFIG / SETUP
+# =========================
 load_dotenv()
+
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-API_URL = os.getenv("SUITE_API_URL", "https://ai-corporate-suite-production.up.railway.app")
+API_URL = os.getenv(
+    "SUITE_API_URL",
+    "https://ai-corporate-suite-production.up.railway.app"
+)
 
-bot = telebot.TeleBot(BOT_TOKEN)
-claude = Anthropic(api_key=ANTHROPIC_KEY)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+if not BOT_TOKEN:
+    raise ValueError("Missing TELEGRAM_BOT_TOKEN")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError("Missing SUPABASE_URL or SUPABASE_KEY")
+
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+claude = Anthropic(api_key=ANTHROPIC_KEY) if ANTHROPIC_KEY else None
 
-def get_supabase_context():
-    """Fetches real-time data from the 3 industrial pillars"""
-    context = {}
-    
-    # --- SmartPort ---
+
+# =========================
+# 2. DATA HELPERS
+# =========================
+def get_supabase_context() -> dict:
+    """
+    Fetch real-time summary from the 3 platform pillars.
+    """
+    context = {
+        "smartport": {"total": 0, "critical": 0},
+        "nasa": {"total": 0, "critical": 0},
+        "stockout": {"total": 0, "high": 0},
+    }
+
+    # SmartPort
     try:
-        sp = supabase.table('smartport_predictions').select('risk_level').execute()
-        lvls = [r['risk_level'] for r in sp.data]
-        context['smartport'] = {'total': len(lvls), 'critical': lvls.count('CRITICAL')}
-    except: context['smartport'] = {'total': 0, 'critical': 0}
-    
-    # --- NASA RUL ---
+        sp = supabase.table("smartport_predictions").select("risk_level").execute()
+        rows = sp.data or []
+        levels = [r.get("risk_level") for r in rows if r.get("risk_level") is not None]
+        context["smartport"] = {
+            "total": len(levels),
+            "critical": levels.count("CRITICAL"),
+        }
+    except Exception as exc:
+        logger.warning("SmartPort context fetch failed: %s", exc)
+
+    # NASA
     try:
-        ns = supabase.table('nasa_predictions').select('predicted_rul').execute()
-        ruls = [r['predicted_rul'] for r in ns.data]
-        context['nasa'] = {'total': len(ruls), 'critical': len([r for r in ruls if r < 30])}
-    except: context['nasa'] = {'total': 0, 'critical': 0}
-    
-    # --- Stockout ---
+        ns = supabase.table("nasa_predictions").select("predicted_rul").execute()
+        rows = ns.data or []
+        ruls = [r.get("predicted_rul") for r in rows if r.get("predicted_rul") is not None]
+        context["nasa"] = {
+            "total": len(ruls),
+            "critical": len([r for r in ruls if r < 30]),
+        }
+    except Exception as exc:
+        logger.warning("NASA context fetch failed: %s", exc)
+
+    # Stockout
     try:
-        st = supabase.table('stockout_predictions').select('risk_level').execute()
-        lvls = [r['risk_level'] for r in st.data]
-        context['stockout'] = {'total': len(lvls), 'high': lvls.count('HIGH')}
-    except: context['stockout'] = {'total': 0, 'high': 0}
-        
+        st = supabase.table("stockout_predictions").select("risk_level").execute()
+        rows = st.data or []
+        levels = [r.get("risk_level") for r in rows if r.get("risk_level") is not None]
+        context["stockout"] = {
+            "total": len(levels),
+            "high": levels.count("HIGH") + levels.count("CRITICAL"),
+        }
+    except Exception as exc:
+        logger.warning("Stockout context fetch failed: %s", exc)
+
     return context
 
-# 2. VISUAL HANDLERS
-@bot.message_handler(commands=['start', 'help'])
+
+def build_status_report() -> str:
+    ctx = get_supabase_context()
+
+    report = [
+        "📊 *EXECUTIVE SYSTEM REPORT*",
+        "━━━━━━━━━━━━━━━━━━",
+        "",
+        "🚢 *SMARTPORT LOGISTICS*",
+        f"• Total Records: `{ctx['smartport']['total']}`",
+        f"• Critical Alerts: `{'🔴 ' + str(ctx['smartport']['critical']) if ctx['smartport']['critical'] > 0 else '🟢 None'}`",
+        "",
+        "🔧 *NASA ENGINE RUL*",
+        f"• Engines Monitored: `{ctx['nasa']['total']}`",
+        f"• Risk (<30 cycles): `{'🔴 ' + str(ctx['nasa']['critical']) if ctx['nasa']['critical'] > 0 else '🟢 Healthy'}`",
+        "",
+        "📦 *INVENTORY STOCKOUT*",
+        f"• Items Analyzed: `{ctx['stockout']['total']}`",
+        f"• High Risk: `{'🔴 ' + str(ctx['stockout']['high']) if ctx['stockout']['high'] > 0 else '🟢 Optimal'}`",
+        "",
+        "━━━━━━━━━━━━━━━━━━",
+        "💬 *AI Insights:* _Ask me for a summary, risks, anomalies, or priorities._",
+    ]
+
+    return "\n".join(report)
+
+
+# =========================
+# 3. ALERT FUNCTION
+# =========================
+def send_push_alert(message: str) -> dict:
+    """
+    Send push alert to configured Telegram chat.
+    Used by predictors when high-risk events are detected.
+    """
+    if not TELEGRAM_CHAT_ID:
+        logger.warning("TELEGRAM_CHAT_ID is missing")
+        return {"sent": 0, "error": "TELEGRAM_CHAT_ID missing"}
+
+    try:
+        bot.send_message(TELEGRAM_CHAT_ID, message)
+        logger.info("Telegram alert sent successfully")
+        return {"sent": 1}
+    except Exception as exc:
+        logger.exception("Failed to send Telegram alert: %s", exc)
+        return {"sent": 0, "error": str(exc)}
+
+
+# =========================
+# 4. TELEGRAM HANDLERS
+# =========================
+@bot.message_handler(commands=["start", "help"])
 def welcome(message):
     welcome_text = (
         "✨ *AI Corporate Suite v2.0* ✨\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        "Hello! I am your **Industrial Intelligence Assistant**. "
-        "I monitor your fleet's health in real-time.\n\n"
-        "🚀 **Available Commands:**\n"
-        "👉 `/status` - Full Fleet Overview\n"
-        "👉 `/help` - Show this guide\n\n"
-        "💡 *Tip:* You can ask me things like: \n"
-        "_'Which engines need maintenance?'_ or \n"
-        "_'Give me a summary of the port risk.'_"
+        "Hello. I am your *Industrial Intelligence Assistant*.\n\n"
+        "🚀 *Available Commands*\n"
+        "• `/status` - Full system overview\n"
+        "• `/help` - Show this guide\n\n"
+        "💡 *Examples*\n"
+        "_Which engines need maintenance?_\n"
+        "_Give me a summary of port risk._\n"
+        "_What is the current inventory risk level?_"
     )
-    bot.reply_to(message, welcome_text, parse_mode='Markdown')
+    bot.reply_to(message, welcome_text)
 
-@bot.message_handler(commands=['status'])
+
+@bot.message_handler(commands=["status"])
 def status_report(message):
-    ctx = get_supabase_context()
-    
-    # Visual construction of the report
-    report = [
-        "📊 *EXECUTIVE SYSTEM REPORT*",
-        "━━━━━━━━━━━━━━━━━━",
-        f"🚢 *SMARTPORT LOGISTICS*",
-        f"  ├ Total Records: `{ctx['smartport']['total']}`",
-        f"  └ Critical Alerts: `{'🔴 ' + str(ctx['smartport']['critical']) if ctx['smartport']['critical'] > 0 else '🟢 None'}`",
-        "",
-        f"🔧 *NASA ENGINE RUL*",
-        f"  ├ Engines Monitored: `{ctx['nasa']['total']}`",
-        f"  └ Risk (<30 cycles): `{'🔴 ' + str(ctx['nasa']['critical']) if ctx['nasa']['critical'] > 0 else '🟢 Healthy'}`",
-        "",
-        f"📦 *INVENTORY STOCKOUT*",
-        f"  ├ Items Analyzed: `{ctx['stockout']['total']}`",
-        f"  └ High Risk: `{'🔴 ' + str(ctx['stockout']['high']) if ctx['stockout']['high'] > 0 else '🟢 Optimal'}`",
-        "━━━━━━━━━━━━━━━━━━",
-        "💬 *AI Insights:* _Ask me for a detailed analysis of these figures._"
-    ]
-    
-    bot.reply_to(message, "\n".join(report), parse_mode='Markdown')
+    try:
+        report = build_status_report()
+        bot.reply_to(message, report)
+    except Exception as exc:
+        logger.exception("Status report failed: %s", exc)
+        bot.reply_to(
+            message,
+            "❌ Error generating status report. Please try again."
+        )
 
-@bot.message_handler(func=lambda message: True)
+
+@bot.message_handler(func=lambda message: bool(message.text and not message.text.startswith("/")))
 def handle_ai(message):
-    bot.send_chat_action(message.chat.id, 'typing')
-    context = get_supabase_context()
-    
-    # Claude System Prompt with Visual Instructions
-    system_prompt = f"""You are the AI Corporate Assistant. 
-    Data: SmartPort({context['smartport']}), NASA({context['nasa']}), Stockout({context['stockout']}).
-    
-    RULES:
-    1. Use Markdown for bold/italic text.
-    2. Use professional Emojis (🚀, 📊, ⚠️, ✅).
-    3. Be concise but insightful.
-    4. If there are CRITICAL or HIGH risks, highlight them with 🚨.
-    5. Always reply in the same language as the user."""
+    bot.send_chat_action(message.chat.id, "typing")
 
-    response = claude.messages.create(
-        model="claude-3-5-sonnet-20241022",
-        max_tokens=1024,
-        messages=[{"role": "user", "content": message.text}]
-    )
-    bot.reply_to(message, response.content[0].text, parse_mode='Markdown')
-
-def send_push_alert(message: str):
-    """
-    Send alert message to configured Telegram chat.
-    Used by predictors when high-risk events are detected.
-    """
-
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-
-    if not bot:
-        return {"sent": 0, "error": "Bot not initialized"}
-
-    if not chat_id:
-        return {"sent": 0, "error": "TELEGRAM_CHAT_ID missing"}
+    if not claude:
+        bot.reply_to(
+            message,
+            "⚠️ Claude is not configured right now. Available commands: `/status` and `/help`."
+        )
+        return
 
     try:
-        bot.send_message(chat_id, message, parse_mode="Markdown")
-        return {"sent": 1}
-    except Exception as exc:
-        return {"sent": 0, "error": str(exc)}
+        context = get_supabase_context()
 
+        system_prompt = f"""
+You are the AI Corporate Assistant for an industrial AI platform.
+
+Current platform data:
+- SmartPort: {context['smartport']}
+- NASA RUL: {context['nasa']}
+- Stockout: {context['stockout']}
+
+Rules:
+1. Reply in the same language as the user.
+2. Be concise, executive, and useful.
+3. Use Markdown formatting when helpful.
+4. If there are CRITICAL or HIGH risks, highlight them clearly.
+5. Focus on operational implications, not generic theory.
+"""
+
+        response = claude.messages.create(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=700,
+            system=system_prompt,
+            messages=[
+                {"role": "user", "content": message.text}
+            ],
+        )
+
+        reply_text = response.content[0].text.strip()
+        bot.reply_to(message, reply_text)
+
+    except Exception as exc:
+        logger.exception("Claude response failed: %s", exc)
+        bot.reply_to(
+            message,
+            "❌ I could not process that request right now."
+        )
+
+
+# =========================
+# 5. LOCAL RUN
+# =========================
 if __name__ == "__main__":
-    print("🚀 Corporate Visual Bot is live...")
-    bot.infinity_polling()
+    logger.info("🚀 AI Corporate Suite Telegram bot is live...")
+    bot.infinity_polling(skip_pending=True)
