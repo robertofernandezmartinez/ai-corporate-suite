@@ -17,7 +17,7 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID") # ID autorizado
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
 BOT_BUILD = "BUILD 1745 - OPTIMIZED"
 
@@ -31,7 +31,7 @@ if not BOT_TOKEN:
     raise ValueError("Missing TELEGRAM_BOT_TOKEN")
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL else None
+supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) if SUPABASE_URL else None
 claude = Anthropic(api_key=ANTHROPIC_KEY) if ANTHROPIC_KEY else None
 
 # =========================
