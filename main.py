@@ -11,7 +11,7 @@ import time
 # ==========================================
 # AI CORPORATE SUITE - MAIN API ENTRY POINT
 # ==========================================
-# Build: 2.0.1 - Diagnostic Mode
+# Build: 2.0.2 - Fixed Path for bot/ folder
 # Architecture: FastAPI + Background Telegram Thread
 
 app = FastAPI(
@@ -36,7 +36,7 @@ logger = logging.getLogger("ai-corporate-suite-api")
 async def startup_event():
     """
     Service startup logic:
-    1. Spawns Telegram Bot in a background thread with diagnostic logs.
+    1. Spawns Telegram Bot in a background thread looking into bot/ folder.
     2. Initializes ML Engines for Stockout, SmartPort, and NASA RUL.
     """
     global stockout_engine, smartport_engine, nasa_engine
@@ -46,29 +46,29 @@ async def startup_event():
         # Delay to ensure Railway network stack is fully ready
         time.sleep(5)
         try:
-            # PATH DIAGNOSTICS
+            # Ensure the root and the bot folder are in sys.path
             base_path = os.path.dirname(os.path.abspath(__file__))
             if base_path not in sys.path:
                 sys.path.append(base_path)
-
-            # Check what files are actually present in the deployment
-            files_present = os.listdir(base_path)
-            logger.info(f"📂 Files detected in {base_path}: {files_present}")
-
-            if "telegram_bot.py" not in files_present:
-                logger.error("❌ CRITICAL: telegram_bot.py NOT FOUND in deployment root!")
+            
+            # Diagnostic: check if the bot directory exists
+            bot_folder = os.path.join(base_path, "bot")
+            if os.path.exists(bot_folder):
+                logger.info(f"📂 Bot folder detected. Contents: {os.listdir(bot_folder)}")
+            else:
+                logger.error(f"❌ CRITICAL: Folder 'bot/' NOT FOUND in {base_path}")
                 return
 
-            # Dynamic import after path verification
-            import telegram_bot
-            logger.info("🤖 Bot module imported successfully.")
+            # IMPORT FROM THE SUBFOLDER
+            from bot.telegram_bot import bot as telegram_instance
+            logger.info("🤖 Bot module imported successfully from bot/ folder.")
             
             # Clear webhooks to allow clean Polling
-            telegram_bot.bot.remove_webhook()
+            telegram_instance.remove_webhook()
             logger.info("🤖 Webhook cleared. Starting infinity polling...")
             
             # Start polling
-            telegram_bot.bot.infinity_polling(
+            telegram_instance.infinity_polling(
                 skip_pending=True, 
                 timeout=60, 
                 long_polling_timeout=60
@@ -121,7 +121,6 @@ app.add_middleware(
 
 @app.get("/")
 def root():
-    """System health check and engine status."""
     return {
         "status": "Online",
         "suite": "AI Corporate Suite",
@@ -169,8 +168,5 @@ async def upload_nasa(file: UploadFile = File(...)):
         logger.error(f"NASA Endpoint Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# ==========================================
-# LOCAL EXECUTION
-# ==========================================
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
