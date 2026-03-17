@@ -240,6 +240,10 @@ def handle_ai(message):
             f"❌ Claude error:\n`{str(exc)}`"
         )
 
+@bot.message_handler(commands=["id"])
+def get_id(message):
+    bot.reply_to(message, f"Your chat_id is: {message.chat.id}")
+    
 
 # =========================
 # 6. LOCAL RUN
