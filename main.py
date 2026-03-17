@@ -11,8 +11,8 @@ import time
 # ==========================================
 # AI CORPORATE SUITE - MAIN API ENTRY POINT
 # ==========================================
-# This service hosts 3 independent ML engines and a Telegram Bot thread.
-# Architecture: FastAPI (Web/API) + Threading (Telegram Bot Polling)
+# Build: 2.0.1 - Diagnostic Mode
+# Architecture: FastAPI + Background Telegram Thread
 
 app = FastAPI(
     title="AI Corporate Suite",
@@ -36,7 +36,7 @@ logger = logging.getLogger("ai-corporate-suite-api")
 async def startup_event():
     """
     Service startup logic:
-    1. Spawns Telegram Bot in a background thread.
+    1. Spawns Telegram Bot in a background thread with diagnostic logs.
     2. Initializes ML Engines for Stockout, SmartPort, and NASA RUL.
     """
     global stockout_engine, smartport_engine, nasa_engine
@@ -46,19 +46,28 @@ async def startup_event():
         # Delay to ensure Railway network stack is fully ready
         time.sleep(5)
         try:
-            # Add current directory to sys.path to ensure module discovery
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            if current_dir not in sys.path:
-                sys.path.append(current_dir)
+            # PATH DIAGNOSTICS
+            base_path = os.path.dirname(os.path.abspath(__file__))
+            if base_path not in sys.path:
+                sys.path.append(base_path)
 
+            # Check what files are actually present in the deployment
+            files_present = os.listdir(base_path)
+            logger.info(f"📂 Files detected in {base_path}: {files_present}")
+
+            if "telegram_bot.py" not in files_present:
+                logger.error("❌ CRITICAL: telegram_bot.py NOT FOUND in deployment root!")
+                return
+
+            # Dynamic import after path verification
             import telegram_bot
             logger.info("🤖 Bot module imported successfully.")
             
-            # CRITICAL: Remove existing webhooks to allow clean Polling
+            # Clear webhooks to allow clean Polling
             telegram_bot.bot.remove_webhook()
             logger.info("🤖 Webhook cleared. Starting infinity polling...")
             
-            # Start polling with long timeout for stability
+            # Start polling
             telegram_bot.bot.infinity_polling(
                 skip_pending=True, 
                 timeout=60, 
@@ -164,5 +173,4 @@ async def upload_nasa(file: UploadFile = File(...)):
 # LOCAL EXECUTION
 # ==========================================
 if __name__ == "__main__":
-    # For local testing. Railway uses: uvicorn main:app --host 0.0.0.0 --port $PORT
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
