@@ -4,7 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import logging
 import os
-import threading  # <--- Añadido para el bot
+import threading
+import sys
 
 # =========================
 # AI Corporate Suite (API)
@@ -17,8 +18,6 @@ import threading  # <--- Añadido para el bot
 # The UI (Streamlit) should call this API via HTTP using API_BASE_URL.
 # In Railway, the service is started with:
 #   uvicorn main:app --host 0.0.0.0 --port $PORT
-#
-# Note: The __main__ block below is ONLY for local development. Railway ignores it.
 
 app = FastAPI(
     title="AI Corporate Suite",
@@ -39,21 +38,28 @@ logger = logging.getLogger("ai-corporate-suite-api")
 @app.on_event("startup")
 async def startup_event():
     """
-    Initialize all ML engines on API startup.
-    If one fails, the API still boots, but that engine will remain offline.
+    Initialize all ML engines and Telegram Bot on API startup.
+    If one fails, the API still boots, but that component will remain offline.
     """
     global stockout_engine, smartport_engine, nasa_engine
 
-    # --- 1. Load Telegram Bot (Background) ---
+    # --- 1. Load Telegram Bot (Background Service) ---
     try:
-        from telegram_bot import bot
+        # Ensure current directory is in sys.path to avoid ModuleNotFoundError
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        if current_dir not in sys.path:
+            sys.path.append(current_dir)
+
+        # Dynamic import of the bot module
+        import telegram_bot
+        bot = telegram_bot.bot
         
         def run_bot():
             logger.info("🤖 Telegram Bot: Starting polling...")
-            # skip_pending=True evita que el bot responda a mensajes viejos al arrancar
+            # skip_pending=True prevents the bot from answering old messages on startup
             bot.infinity_polling(skip_pending=True, timeout=20)
 
-        # Iniciamos el bot en un hilo separado (daemon=True para que cierre con la app)
+        # Start the bot in a separate thread (daemon=True to exit with main app)
         bot_thread = threading.Thread(target=run_bot, daemon=True)
         bot_thread.start()
         logger.info("✅ Telegram Bot: BACKGROUND SERVICE ONLINE")
@@ -114,9 +120,6 @@ def root():
 # --- ENDPOINT: STOCKOUT RISK ---
 @app.post("/stockout/upload", tags=["Inventory Management"])
 async def upload_stockout(file: UploadFile = File(...)):
-    """
-    Upload a CSV file and run stockout risk predictions.
-    """
     if not stockout_engine:
         raise HTTPException(status_code=500, detail="Stockout engine not initialized")
 
@@ -132,21 +135,14 @@ async def upload_stockout(file: UploadFile = File(...)):
 # --- ENDPOINT: SMARTPORT DELAYS / RISK ---
 @app.post("/smartport/upload", tags=["Maritime Logistics"])
 async def upload_smartport(file: UploadFile = File(...)):
-    """
-    Upload a CSV file and run SmartPort risk predictions.
-    """
     if not smartport_engine:
         raise HTTPException(status_code=500, detail="SmartPort engine not initialized")
 
     try:
         print(f"📥 Processing SmartPort: {file.filename}")
-
-        # Run inference
         result = await smartport_engine.predict_from_file(file)
-
-        # DEBUG: confirm whether Supabase client exists inside the SmartPort engine.
+        # Debug Supabase connectivity
         print(f"SMARTPORT: supabase client present? {bool(getattr(smartport_engine, 'supabase', None))}")
-
         return JSONResponse(content=result)
     except Exception as e:
         logger.error(f"SmartPort Error: {e}")
@@ -156,9 +152,6 @@ async def upload_smartport(file: UploadFile = File(...)):
 # --- ENDPOINT: NASA RUL (Engine Health) ---
 @app.post("/nasa/upload", tags=["Predictive Maintenance"])
 async def upload_nasa(file: UploadFile = File(...)):
-    """
-    Upload a CSV file and run NASA Remaining Useful Life predictions.
-    """
     if not nasa_engine:
         raise HTTPException(status_code=500, detail="NASA engine not initialized")
 
@@ -172,6 +165,5 @@ async def upload_nasa(file: UploadFile = File(...)):
 
 
 if __name__ == "__main__":
-    # Local development only (Railway ignores this block).
-    # Railway uses: uvicorn main:app --host 0.0.0.0 --port $PORT
+    # Local development execution
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
