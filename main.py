@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import logging
 import os
+import threading  # <--- Añadido para el bot
 
 # =========================
 # AI Corporate Suite (API)
@@ -43,7 +44,23 @@ async def startup_event():
     """
     global stockout_engine, smartport_engine, nasa_engine
 
-    # --- Load Stockout Engine ---
+    # --- 1. Load Telegram Bot (Background) ---
+    try:
+        from telegram_bot import bot
+        
+        def run_bot():
+            logger.info("🤖 Telegram Bot: Starting polling...")
+            # skip_pending=True evita que el bot responda a mensajes viejos al arrancar
+            bot.infinity_polling(skip_pending=True, timeout=20)
+
+        # Iniciamos el bot en un hilo separado (daemon=True para que cierre con la app)
+        bot_thread = threading.Thread(target=run_bot, daemon=True)
+        bot_thread.start()
+        logger.info("✅ Telegram Bot: BACKGROUND SERVICE ONLINE")
+    except Exception as e:
+        logger.error(f"⚠️ Telegram Bot Load Failed: {e}")
+
+    # --- 2. Load Stockout Engine ---
     try:
         from core.stockout_predictor import StockoutPredictor
         stockout_engine = StockoutPredictor()
@@ -51,7 +68,7 @@ async def startup_event():
     except Exception as e:
         print(f"⚠️ Stockout Load Failed: {e}")
 
-    # --- Load SmartPort Engine ---
+    # --- 3. Load SmartPort Engine ---
     try:
         from core.smartport_predictor import SmartPortPredictor
         smartport_engine = SmartPortPredictor()
@@ -59,7 +76,7 @@ async def startup_event():
     except Exception as e:
         print(f"⚠️ SmartPort Load Failed: {e}")
 
-    # --- Load NASA RUL Engine ---
+    # --- 4. Load NASA RUL Engine ---
     try:
         from core.nasa_predictor import NASAPredictor
         nasa_engine = NASAPredictor()
@@ -128,7 +145,6 @@ async def upload_smartport(file: UploadFile = File(...)):
         result = await smartport_engine.predict_from_file(file)
 
         # DEBUG: confirm whether Supabase client exists inside the SmartPort engine.
-        # If this prints False, the engine will not persist rows to Supabase.
         print(f"SMARTPORT: supabase client present? {bool(getattr(smartport_engine, 'supabase', None))}")
 
         return JSONResponse(content=result)
