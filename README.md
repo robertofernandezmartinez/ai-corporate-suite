@@ -1,10 +1,24 @@
 # 🚀 AI Corporate Suite
-**Industrial Intelligence Platform: From Predictive Models to Operational Reality**
+**Industrial Intelligence Platform: From Raw Data to Operational Reality**
 
 ### 🌐 Live Ecosystem
 - **Executive Dashboard (UI):** [Live Suite](https://ui-production-a2ba.up.railway.app)
 - **Interactive API Control (Swagger):** [Production API Docs](https://api-production-dd2a.up.railway.app/docs)
 - **Direct Support:** [Telegram Bot](https://t.me/TuBotUser) *(Proactive Monitoring)*
+
+---
+
+# 🏗️ Architecture & Flow
+
+![AI Corporate Suite Architecture](images/system_architecture.png)
+
+The platform follows a modern, decoupled architecture:
+1. **Frontend (Streamlit):** Executive reporting and manual uploads.
+2. **Backend (FastAPI):** High-performance inference engine with multithreaded services.
+3. **Persistence (Supabase):** PostgreSQL storage for batch tracking and historical auditing.
+
+**The Data Lifecycle:**
+`Raw Data Upload` ➔ `Schema Validation` ➔ `Machine Learning Inference` ➔ `DB Persistence` ➔ `Proactive Alerting` ➔ `Dashboard Refresh`
 
 ![AI Corporate Suite Architecture](images/system_architecture.png)
 
@@ -54,17 +68,6 @@ Built for the "real world" where data is messy. Every engine includes a **Data G
 - **Streamlit UI:** Specialized dashboards for deep-dive historical analysis.
 - **FastAPI Swagger:** A professional technical interface for external system integration.
 - **Telegram Bot:** A conversational bridge for quick status checks and real-time push alerts.
-
----
-
-# 🏗️ Architecture & Flow
-The platform follows a modern, decoupled architecture:
-1. **Frontend (Streamlit):** Executive reporting and manual uploads.
-2. **Backend (FastAPI):** High-performance inference engine with multithreaded services.
-3. **Persistence (Supabase):** PostgreSQL storage for batch tracking and historical auditing.
-
-**The Data Lifecycle:**
-`Raw Data Upload` ➔ `Schema Validation` ➔ `ML Inference` ➔ `DB Persistence` ➔ `Proactive Alerting` ➔ `Dashboard Refresh`
 
 ---
 
