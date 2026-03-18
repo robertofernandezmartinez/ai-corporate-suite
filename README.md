@@ -20,8 +20,6 @@ The platform follows a modern, decoupled architecture:
 **The Data Lifecycle:**
 `Raw Data Upload` ➔ `Schema Validation` ➔ `Machine Learning Inference` ➔ `DB Persistence` ➔ `Proactive Alerting` ➔ `Dashboard Refresh`
 
-![AI Corporate Suite Architecture](images/system_architecture.png)
-
 ---
 
 # 🔭 Perspective: The Operational Bridge
