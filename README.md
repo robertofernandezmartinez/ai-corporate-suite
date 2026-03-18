@@ -73,7 +73,7 @@ ai-corporate-suite/
 ├── db/                     # Cloud database integration
 ├── pages/                  # Streamlit modular dashboards
 └── suite_streamlit.py      # Main Dashboard entrypoint
-
+```
 ---
 
 # 🛠️ Local Installation
@@ -93,6 +93,6 @@ streamlit run suite_streamlit.py # Start UI
 
 ---
 
-## 👨‍💻 Author
+# 👨‍💻 Author
 **Roberto Fernández** - Industrial AI & Data Engineering  
 [LinkedIn](https://www.linkedin.com/in/robertofernandezmartinez/) | [Portfolio](https://github.com/robertofernandezmartinez)
