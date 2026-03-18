@@ -6,6 +6,8 @@
 - **Interactive API Control (Swagger):** [Production API Docs](https://api-production-dd2a.up.railway.app/docs)
 - **Direct Support:** [Telegram Bot](https://t.me/TuBotUser) *(Proactive Monitoring)*
 
+![AI Corporate Suite Architecture](images/system_architecture.png)
+
 ---
 
 # 🔭 Perspective: The Operational Bridge
