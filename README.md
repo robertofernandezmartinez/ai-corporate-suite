@@ -13,6 +13,7 @@
 ![AI Corporate Suite Architecture](images/system_architecture.png)
 
 The platform follows a modern, decoupled architecture:
+
 1. **Frontend (Streamlit):** Executive reporting and manual uploads.
 2. **Backend (FastAPI):** High-performance inference engine with multithreaded services.
 3. **Persistence (Supabase):** PostgreSQL storage for batch tracking and historical auditing.
