@@ -90,6 +90,7 @@ pip install -r requirements.txt
 # 3. Launch Services
 uvicorn main:app --reload        # Start API
 streamlit run suite_streamlit.py # Start UI
+```
 
 ---
 
