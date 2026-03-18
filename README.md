@@ -25,6 +25,21 @@ The platform currently includes three applied AI modules that also exist as stan
 
 ---
 
+# 🛠️ Core Capabilities
+This repository demonstrates how machine learning models are transformed into an **Operational AI Platform**. The system empowers users and operators to:
+
+* **Ingest & Validate:** Upload raw datasets through a web interface with real-time schema validation (Guardrails).
+* **Trigger Inference:** Execute machine learning predictions through a dedicated, professional-grade REST API.
+* **Cloud Persistence:** Automatically store every prediction and metadata in a Supabase (PostgreSQL) cloud database.
+* **Historical Analysis:** Monitor and audit past performance through specialized executive dashboards.
+* **Proactive Monitoring:** Receive instant push notifications on Telegram when the engine detects **CRITICAL** industrial risks.
+* **Conversational Control:** Query system status and interact with the AI modules via a multi-channel Telegram Bot.
+* **Automated Maintenance:** Run scheduled scripts for demo data reloading and automatic cleanup of old prediction batches.
+
+> This project is a blueprint for integrating isolated ML notebooks into a scalable, multi-service production ecosystem.
+
+---
+
 # ⚡ Why this project matters (Value Proposition)
 
 ### 🔔 Proactive Intelligence
