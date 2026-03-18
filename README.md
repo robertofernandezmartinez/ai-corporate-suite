@@ -27,8 +27,8 @@ Most AI projects remain as isolated Jupyter Notebooks. **AI Corporate Suite** is
 
 This platform doesn't just "predict"; it **monitors, persists, and alerts**. It is a decoupled ecosystem (FastAPI + Streamlit + Supabase) designed to transform raw sensor and retail data into immediate executive action.
 
-### 🧩 Applied AI Modules
-The platform currently includes three applied AI modules that also exist as standalone projects separately:
+### 🧩 Applied AI Modules (3 Machine Learning projects)
+The platform currently includes three applied AI modules that also exist as standalone **machine learning** projects separately:
 
 - **SmartPort** — Maritime operational risk prediction
     - [Standalone Project Repository](https://github.com/robertofernandezmartinez/smartport-ai-risk-early-warning)
