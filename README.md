@@ -9,7 +9,7 @@
 ---
 
 # 🏗️ Architecture & Flow
-
+ 
 ![AI Corporate Suite Architecture](images/system_architecture.png)
 
 The platform follows a modern, decoupled architecture:
