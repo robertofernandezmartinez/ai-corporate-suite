@@ -76,28 +76,67 @@ async def startup_event():
         logger.error(f"⚠️ NASA Load Failed: {e}")
 
 # ==========================================
-# API ENDPOINTS (UNCHANGED)
+# API ENDPOINTS (WITH PROACTIVE ALERTS)
 # ==========================================
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 @app.get("/")
 def root():
-    return {"status": "Online", "active_engines": {"stockout": stockout_engine is not None, "smartport": smartport_engine is not None, "nasa": nasa_engine is not None}}
+    return {
+        "status": "Online", 
+        "active_engines": {
+            "stockout": stockout_engine is not None, 
+            "smartport": smartport_engine is not None, 
+            "nasa": nasa_engine is not None
+        }
+    }
 
 @app.post("/stockout/upload")
 async def upload_stockout(file: UploadFile = File(...)):
-    if not stockout_engine: raise HTTPException(status_code=500)
-    return await stockout_engine.predict_from_file(file)
+    if not stockout_engine: raise HTTPException(status_code=500, detail="Stockout engine offline")
+    try:
+        result = await stockout_engine.predict_from_file(file)
+        
+        # Alert if critical risks found
+        criticals = result.get("summary", {}).get("critical_risks", 0)
+        if criticals > 0:
+            from telegram_bot import send_push_alert
+            send_push_alert("Stockout", "CRITICAL", f"Detected {criticals} items at immediate risk of depletion.")
+            
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/smartport/upload")
 async def upload_smartport(file: UploadFile = File(...)):
-    if not smartport_engine: raise HTTPException(status_code=500)
-    return await smartport_engine.predict_from_file(file)
+    if not smartport_engine: raise HTTPException(status_code=500, detail="SmartPort engine offline")
+    try:
+        result = await smartport_engine.predict_from_file(file)
+        
+        # Alert if high risk detected in maritime logistics
+        if result.get("summary", {}).get("risk_level") == "CRITICAL":
+            from telegram_bot import send_push_alert
+            send_push_alert("SmartPort", "CRITICAL", "High probability of port congestion or vessel delay detected.")
+            
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/nasa/upload")
 async def upload_nasa(file: UploadFile = File(...)):
-    if not nasa_engine: raise HTTPException(status_code=500)
-    return await nasa_engine.predict_from_file(file)
+    if not nasa_engine: raise HTTPException(status_code=500, detail="NASA RUL engine offline")
+    try:
+        result = await nasa_engine.predict_from_file(file)
+        
+        # Alert if an engine's RUL is below threshold (e.g., < 30 cycles)
+        critical_engines = result.get("summary", {}).get("critical_engines", 0)
+        if critical_engines > 0:
+            from telegram_bot import send_push_alert
+            send_push_alert("NASA RUL", "CRITICAL", f"{critical_engines} engines require immediate maintenance (RUL < 30).")
+            
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

@@ -228,6 +228,36 @@ def handle_ai(message):
 
 
 # =========================
+# EXTRA: PUSH NOTIFICATIONS
+# =========================
+def send_push_alert(engine_name: str, risk_level: str, details: str):
+    """
+    Sends a proactive alert to the admin when a CRITICAL risk is detected.
+    """
+    if not BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        logger.warning("Push failed: Missing Token or Chat ID")
+        return
+
+    emoji = "🔴" if risk_level == "CRITICAL" else "⚠️"
+    message = (
+        f"{emoji} *INDUSTRIAL RISK ALERT*\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"🔹 *Engine:* {engine_name.upper()}\n"
+        f"🔹 *Level:* {risk_level}\n"
+        f"🔹 *Details:* {details}\n"
+        f"━━━━━━━━━━━━━━━━━━\n"
+        f"🕒 _Action required via Dashboard_"
+    )
+    
+    try:
+        # Re-using the existing bot instance
+        bot.send_message(TELEGRAM_CHAT_ID, message, parse_mode="Markdown")
+        logger.info(f"✅ Push Alert sent for {engine_name}")
+    except Exception as e:
+        logger.error(f"❌ Failed to send Push: {e}")
+
+
+# =========================
 # 6. LOCAL RUN
 # =========================
 if __name__ == "__main__":
